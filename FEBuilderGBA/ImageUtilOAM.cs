@@ -23,6 +23,15 @@ namespace FEBuilderGBA
 
         public const int SCREEN_TILE_WIDTH_M1 = 240 / 8;
 
+        // Additional banim properties. Not used in vanilla.
+        public const uint BA2_AB_UNCOMPPALDATA = 1;
+        public const uint BA2_AB_UNCOMPFRAMEDATA = 2;
+        public const uint BA2_AB_UNCOMPOAMDATA = 4;
+        public const uint BA2_AB_2PALETTES = 8;
+
+        // Direction banim faces (rtl vs ltr OAM).
+        public const uint BANIM_FACELEFT = 0;
+        public const uint BANIM_FACERIGHT = 1;
 
         const byte square = 0;
         const byte horizontal = (byte)(1 << 6);
@@ -39,16 +48,83 @@ namespace FEBuilderGBA
         const int bitmap_spell_addx = 0xAC;
 
 
-        public static Bitmap DrawBattleAnime(uint showSectionData, uint showFrameData, uint sectionData, uint frameData, uint rightToLeftOAM, uint palettes)
+        public static Bitmap DrawBattleAnime(uint showSectionData, uint showFrameData, uint sectionData, uint frameData, uint faceDirection, uint rightToLeftOAM, uint leftToRightOAM, uint palettes, uint additionalProperties)
         {
-            uint sectionData_offset = U.toOffset(sectionData); //int[0xC]個 ヘッダの区切りバイト 絶対値
-
             //解凍する.
             //固定長のsectionData以外はLZ77で圧縮されている.
-            byte[] frameData_UZ = UnCompressFrame(frameData); //画像をどう切り出すかを提起したデータ
-            byte[] rightToLeftOAM_UZ = LZ77.decompress(Program.ROM.Data, U.toOffset(rightToLeftOAM)); //OAM
-            byte[] palettes_UZ = LZ77.decompress(Program.ROM.Data, U.toOffset(palettes)); //Palette
-            if (frameData_UZ.Length <= 0 || rightToLeftOAM_UZ.Length <= 0 || palettes_UZ.Length <= 0)
+            uint sectionData_offset = U.toOffset(sectionData); //int[0xC]個 ヘッダの区切りバイト 絶対値
+
+            byte[] frameData_UZ;
+            byte[] oam_UZ;
+            byte[] palettes_UZ;
+
+            // Decompress data if applicable, otherwise, don't decompress.
+            // - FrameData.
+            if ((additionalProperties & BA2_AB_UNCOMPFRAMEDATA) != 0)
+            {
+                // Uncompressed.
+                frameData_UZ = Program.ROM.getBinaryData(U.toOffset(frameData), U.toOffset(rightToLeftOAM) - U.toOffset(frameData));
+            }
+            else
+            {
+                // Compressed.
+                frameData_UZ = UnCompressFrame(frameData); //画像をどう切り出すかを提起したデータ;
+            }
+
+            // - OAMData.
+            if ((additionalProperties & BA2_AB_UNCOMPOAMDATA) != 0)
+            {
+                // Uncompressed.
+                if (faceDirection == BANIM_FACELEFT)
+                {
+                    // banim facing left.
+                    oam_UZ = Program.ROM.getBinaryData(U.toOffset(rightToLeftOAM), U.toOffset(leftToRightOAM) - U.toOffset(rightToLeftOAM));
+                }
+                else
+                {
+                    // banim facing right.
+                    // We don't know the size of ltrOAM so we assume it's the same as rtlOAM give or take (+100).
+                    oam_UZ = Program.ROM.getBinaryData(U.toOffset(leftToRightOAM), (U.toOffset(leftToRightOAM) - U.toOffset(rightToLeftOAM)) + 100);
+                }
+            }
+            else
+            {
+                // Compressed.
+                if (faceDirection == BANIM_FACELEFT)
+                {
+                    // banim facing left.
+                    oam_UZ = LZ77.decompress(Program.ROM.Data, U.toOffset(rightToLeftOAM)); //OAM
+                }
+                else
+                {
+                    // banim facing right.
+                    oam_UZ = LZ77.decompress(Program.ROM.Data, U.toOffset(leftToRightOAM)); //OAM
+                }
+            }
+
+            // - Palettes.
+            if ((additionalProperties & BA2_AB_UNCOMPPALDATA) != 0)
+            {
+                // Uncompressed.
+                if ((additionalProperties & BA2_AB_2PALETTES) != 0)
+                {
+                // 32 colours.
+                palettes_UZ = Program.ROM.getBinaryData(U.toOffset(palettes), 256);
+                }
+                else
+                {
+                // 16 colours.
+                palettes_UZ = Program.ROM.getBinaryData(U.toOffset(palettes), 128);
+                }
+            }
+            else
+            {
+                // Compressed.
+                palettes_UZ = LZ77.decompress(Program.ROM.Data, U.toOffset(palettes)); //Palette
+            }
+            
+            // Confirm data integrity.
+            if (frameData_UZ.Length <= 0 || oam_UZ.Length <= 0 || palettes_UZ.Length <= 0)
             {
                 return ImageUtil.BlankDummy();
             }
@@ -78,7 +154,7 @@ namespace FEBuilderGBA
                 return ImageUtil.Blank(SCREEN_TILE_WIDTH * 8, SCREEN_TILE_HEIGHT * 8, palettes_UZ, 0);
             }
             Bitmap bitmap = DrawFrameImage
-                (frame, frameData_UZ, palettes_UZ, rightToLeftOAM_UZ);
+                (frame, frameData_UZ, palettes_UZ, oam_UZ);
 
             if (IsSeet01or03(showSectionData))
             {//mode1 と mode3 は特別.  mode1は mode2と、 mode3は mode4 と、ともに利用する.
@@ -98,7 +174,7 @@ namespace FEBuilderGBA
                 if (frame2 != U.NOT_FOUND)
                 {
                     Bitmap bitmap2 = DrawFrameImage
-                        (frame2, frameData_UZ, palettes_UZ, rightToLeftOAM_UZ);
+                        (frame2, frameData_UZ, palettes_UZ, oam_UZ);
                     ImageUtil.BitBlt(bitmap2, 0, 0, bitmap2.Width, bitmap2.Height, bitmap, 0, 0, 0, 0x00);
                     return bitmap2;
                 }

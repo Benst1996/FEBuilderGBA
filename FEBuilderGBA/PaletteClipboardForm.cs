@@ -14,7 +14,9 @@ namespace FEBuilderGBA
         public PaletteClipboardForm()
         {
             InitializeComponent();
+            this.size = 16;
         }
+        int size;
 
         public void SetPalText(string text)
         {
@@ -24,7 +26,10 @@ namespace FEBuilderGBA
         {
             return this.PAL_TEXT.Text;
         }
-
+        public void SetPalSize(int size)
+        {
+            this.size = size;
+        }
 
         private void CancelButton_Click(object sender, EventArgs e)
         {
@@ -34,9 +39,9 @@ namespace FEBuilderGBA
 
         private void ChangeButton_Click(object sender, EventArgs e)
         {
-            if (this.PAL_TEXT.Text.Length != 4 * 16)
+            if (this.PAL_TEXT.Text.Length != 4 * this.size)
             {
-                R.ShowStopError("文字列のサイズが{0}ではありません",4*16);
+                R.ShowStopError("文字列のサイズが{0}ではありません",4*this.size);
                 return;
             }
 

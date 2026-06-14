@@ -10,16 +10,15 @@ using System.Windows.Forms;
 
 namespace FEBuilderGBA
 {
-    public partial class ImageBattleAnimePalletForm : Form
+    public partial class ImageBattleAnimePalletDoubleForm : Form
     {
-        public ImageBattleAnimePalletForm()
+        public ImageBattleAnimePalletDoubleForm()
         {
             InitializeComponent();
             this.PaletteZoomComboBox.SelectedIndex = 0;
             this.PaletteIndexComboBox.SelectedIndex = 0;
-            this.Is32ColorMode = false;
             this.IsCompressed = true;
-            this.PFR = new PaletteFormRef(this);
+            this.PFR = new PaletteFormRef(this, 32);
             PFR.MakePaletteUI(OnChangeColor, GetSampleBitmap);
             SetExpain();
 
@@ -32,8 +31,6 @@ namespace FEBuilderGBA
             });
         }
         PaletteFormRef PFR;
-        //32Colorモードかどうか
-        bool Is32ColorMode;
         public bool IsCompressed;
 
         private void PALETTE_POINTER_ValueChanged(object sender, EventArgs e)
@@ -42,17 +39,10 @@ namespace FEBuilderGBA
             {
                 return;
             }
-            PFR.MakePaletteROMToUI( (uint)PALETTE_ADDRESS.Value, this.IsCompressed, this.PaletteIndexComboBox.SelectedIndex);
+            PFR.MakePaletteROMToUI((uint)PALETTE_ADDRESS.Value, this.IsCompressed, this.PaletteIndexComboBox.SelectedIndex);
             InputFormRef.WriteButtonToYellow(this.PaletteWriteButton, false);
 
-            if (this.Is32ColorMode)
-            {//32colorモード 常に最初のパレットで描画
-                DrawSample(this.BattleAnimeID, 0);
-            }
-            else
-            {//通常モード
-                DrawSample(this.BattleAnimeID, this.PaletteIndexComboBox.SelectedIndex);
-            }
+            DrawSample(this.BattleAnimeID, this.PaletteIndexComboBox.SelectedIndex);
         }
         private void PaletteIndexComboBox_SelectedIndexChanged(object sender, EventArgs e)
         {
@@ -61,17 +51,22 @@ namespace FEBuilderGBA
 
         private void PaletteWriteButton_Click(object sender, EventArgs e)
         {
-            uint newAddr = PFR.MakePaletteUIToROM((uint)PALETTE_ADDRESS.Value, true, this.PaletteIndexComboBox.SelectedIndex );
+            uint newAddr = PFR.MakePaletteUIToROM((uint)PALETTE_ADDRESS.Value, this.IsCompressed, this.PaletteIndexComboBox.SelectedIndex);
             if (newAddr == U.NOT_FOUND)
             {
                 return;
             }
-            PALETTE_ADDRESS.Value = U.toPointer(newAddr);
+
+            if (this.IsCompressed)
+            {
+                PALETTE_ADDRESS.Value = U.toPointer(newAddr);
+            }
+
             InputFormRef.WriteButtonToYellow(this.PaletteWriteButton, false);
             InputFormRef.ShowWriteNotifyAnimation(this, newAddr);
         }
 
-        void DrawSample(uint battleAnimeID,int paletteIndex)
+        void DrawSample(uint battleAnimeID, int paletteIndex)
         {
             Bitmap[] animeframe = new Bitmap[12];
 
@@ -101,7 +96,7 @@ namespace FEBuilderGBA
                 animeframe[index] = ImageBattleAnimeForm.DrawBattleAnime(battleAnimeID
                     , ImageBattleAnimeForm.ScaleTrim.SCALE_90
                     , 0, showsecstion, showframe, paletteIndex);
-                if (!ImageUtil.IsBlankBitmap(animeframe[index],10))
+                if (!ImageUtil.IsBlankBitmap(animeframe[index], 10))
                 {
                     continue;
                 }
@@ -135,24 +130,16 @@ namespace FEBuilderGBA
         {
             return this.DrawBitmap;
         }
-        private bool OnChangeColor(Color color,int paletteno)
+        private bool OnChangeColor(Color color, int paletteno)
         {
             if (this.DrawBitmap == null)
             {
                 return true;
             }
             ColorPalette palette = this.DrawBitmap.Palette; //一度、値をとってからいじらないと無視される
-            if (this.Is32ColorMode)
-            {//32colorモード
-             //パレットを切り替えられないので、現在の場所を絶対値で求める必要がある
-                int palettenoABS = (PaletteIndexComboBox.SelectedIndex * 16) + paletteno;
-                palette.Entries[palettenoABS] = color;
-            }
-            else
-            {//通常モード
-             //パレットをPlayer,Enemy,Other,4thごとに切り替えるため、そのまま変更するだけでよい
-                palette.Entries[paletteno] = color;
-            }
+
+            palette.Entries[paletteno] = color;
+
             this.DrawBitmap.Palette = palette;
             ReDrawBitmap();
 
@@ -160,7 +147,7 @@ namespace FEBuilderGBA
         }
         void ReDrawBitmap()
         {
-            PaletteFormRef.SetScaleSampleImage(this.X_PIC,this.AutoScrollPanel, this.DrawBitmap, this.PaletteZoomComboBox.SelectedIndex);
+            PaletteFormRef.SetScaleSampleImage(this.X_PIC, this.AutoScrollPanel, this.DrawBitmap, this.PaletteZoomComboBox.SelectedIndex);
         }
 
         private void ExportButton_Click(object sender, EventArgs e)
@@ -173,7 +160,7 @@ namespace FEBuilderGBA
             ImageFormRef.ExportImage(this
                 , this.DrawBitmap
                 , InputFormRef.MakeSaveImageFilename(this, U.ToHexString(this.BattleAnimeID))
-                , 1);
+                , 2);
         }
 
         private void ImportButton_Click(object sender, EventArgs e)
@@ -197,15 +184,7 @@ namespace FEBuilderGBA
 
             DrawSample(battleAnimeID, 0);
             int palette_count = ImageUtil.GetPalette16Count(this.DrawBitmap);
-            if (palette_count >= 2)
-            {//32Colorモード
-                this.Is32ColorMode = true;
-            }
-            else
-            {//通常モード
-                this.Is32ColorMode = false;
-            }
-            this.Warning32ColorMode.Visible = this.Is32ColorMode;
+            this.Warning32ColorMode.Visible = true;
             this.PaletteIndexComboBox.SelectedIndex = paletteIndex;
         }
 
@@ -251,6 +230,5 @@ namespace FEBuilderGBA
         {
             PFR.RunRedo();
         }
-
     }
 }

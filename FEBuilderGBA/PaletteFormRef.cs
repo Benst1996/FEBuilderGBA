@@ -18,10 +18,20 @@ namespace FEBuilderGBA
         {
             this.SelfForm = self;
             this.Controls = InputFormRef.GetAllControls(self);
+            this.palSize = 16;
             ClearUndoBuffer();
         }
         Form SelfForm;
         List<Control> Controls;
+        int palSize;
+        
+        public PaletteFormRef(Form self, int palsize)
+        {
+            this.SelfForm = self;
+            this.Controls = InputFormRef.GetAllControls(self);
+            this.palSize = palsize;
+            ClearUndoBuffer();
+        }
 
         public void SpoitTool_SelectPalette(PictureBox pic, int options, MouseEventArgs e)
         {
@@ -47,7 +57,7 @@ namespace FEBuilderGBA
             uint og = (uint)(rgb.G & 0xFD);
             uint ob = (uint)(rgb.B & 0xFD);
 
-            for (int paletteno = 1; paletteno <= 16; paletteno++)
+            for (int paletteno = 1; paletteno <= palSize; paletteno++)
             {
                 NumericUpDown r = FindNUD("R", paletteno);
                 NumericUpDown g = FindNUD("G", paletteno);
@@ -184,8 +194,8 @@ namespace FEBuilderGBA
             {
                 PaletteSwapForm form = (PaletteSwapForm)InputFormRef.JumpFormLow<PaletteSwapForm>();
                 form.SetMainColorIndex(paletteno);
-                Color[] colormap = new Color[16 + 1];
-                for (int i = 1; i <= 16; i++)
+                Color[] colormap = new Color[palSize + 1];
+                for (int i = 1; i <= palSize; i++)
                 {
                     NumericUpDown r = FindNUD("R", i);
                     NumericUpDown g = FindNUD("G", i);
@@ -202,7 +212,7 @@ namespace FEBuilderGBA
 
                 PushUndo();
                 this.UndoLock = true;
-                for (int i = 1; i <= 16; i++)
+                for (int i = 1; i <= palSize; i++)
                 {
                     NumericUpDown r = FindNUD("R", i);
                     NumericUpDown g = FindNUD("G", i);
@@ -239,8 +249,8 @@ namespace FEBuilderGBA
                 PaletteChangeColorsForm form = (PaletteChangeColorsForm)InputFormRef.JumpFormLow<PaletteChangeColorsForm>();
                 form.SetMainColorIndex(paletteno);
                 form.SetPreviewBitmap(sample);
-                Color[] colormap = new Color[16 + 1];
-                for (int i = 1; i <= 16; i++)
+                Color[] colormap = new Color[palSize + 1];
+                for (int i = 1; i <= palSize; i++)
                 {
                     NumericUpDown r = FindNUD("R", i);
                     NumericUpDown g = FindNUD("G", i);
@@ -257,7 +267,7 @@ namespace FEBuilderGBA
                 PushUndo();
                 this.UndoLock = true;
 
-                for (int i = 1; i <= 16; i++)
+                for (int i = 1; i <= palSize; i++)
                 {
                     NumericUpDown r = FindNUD("R", i);
                     NumericUpDown g = FindNUD("G", i);
@@ -315,7 +325,7 @@ namespace FEBuilderGBA
 
         public void MakePaletteUI(Func<Color, int, bool> onChangeColor, Func<Bitmap> getSampleBitmap)
         {
-            for (int paletteno = 1; paletteno <= 16; paletteno++)
+            for (int paletteno = 1; paletteno <= palSize; paletteno++)
             {
                 Label p = (Label)FindLabel("P", paletteno);
                 NumericUpDown r = FindNUD("R", paletteno);
@@ -359,7 +369,7 @@ namespace FEBuilderGBA
         {
             PushUndo();
             this.UndoLock = true;
-            for (int paletteno = 1; paletteno <= 16; paletteno++)
+            for (int paletteno = 1; paletteno <= palSize; paletteno++)
             {
                 NumericUpDown r = FindNUD("R", paletteno);
                 NumericUpDown g = FindNUD("G", paletteno);
@@ -496,7 +506,7 @@ namespace FEBuilderGBA
             PushUndo();
             this.UndoLock = true;
 
-            for (int paletteno = 1; paletteno <= 16; paletteno++)
+            for (int paletteno = 1; paletteno <= palSize; paletteno++)
             {
                 NumericUpDown r = FindNUD("R", paletteno);
                 NumericUpDown g = FindNUD("G", paletteno);
@@ -529,7 +539,7 @@ namespace FEBuilderGBA
         }
         void MakePaletteByteGBAToUI(byte[] bin)
         {
-            for (int paletteno = 1; paletteno <= 16; paletteno++)
+            for (int paletteno = 1; paletteno <= palSize; paletteno++)
             {
                 NumericUpDown r = FindNUD("R", paletteno);
                 NumericUpDown g = FindNUD("G", paletteno);
@@ -582,13 +592,13 @@ namespace FEBuilderGBA
             }
 
             this.UndoLock = true;
-            for (int paletteno = 1; paletteno <= 16; paletteno++)
+            for (int paletteno = 1; paletteno <= palSize; paletteno++)
             {
                 NumericUpDown r = FindNUD("R", paletteno);
                 NumericUpDown g = FindNUD("G", paletteno);
                 NumericUpDown b = FindNUD("B", paletteno);
 
-                uint read_addr = addr + (uint)((paletteno - 1) * 2) + (uint)(palette_index * 0x20);
+                uint read_addr = addr + (uint)((paletteno - 1) * 2) + (uint)(palette_index * 0x20 * (palSize >> 4));
                 if (read_addr >= palttebyte.Length)
                 {//念のため読み込む範囲チェック
                     continue;
@@ -621,9 +631,9 @@ namespace FEBuilderGBA
         }
         public byte[] MakePaletteUIToByte()
         {
-            byte[] palttebyte = new byte[16 * 2];
+            byte[] palttebyte = new byte[palSize * 2];
 
-            for (int paletteno = 1; paletteno <= 16; paletteno++)
+            for (int paletteno = 1; paletteno <= palSize; paletteno++)
             {
                 NumericUpDown r = FindNUD("R", paletteno);
                 NumericUpDown g = FindNUD("G", paletteno);
@@ -641,9 +651,9 @@ namespace FEBuilderGBA
 
         byte[] MakePaletteUIToByte_OldValue()
         {
-            byte[] palttebyte = new byte[16 * 2];
+            byte[] palttebyte = new byte[palSize * 2];
 
-            for (int paletteno = 1; paletteno <= 16; paletteno++)
+            for (int paletteno = 1; paletteno <= palSize; paletteno++)
             {
                 NumericUpDown r = FindNUD("R", paletteno);
                 NumericUpDown g = FindNUD("G", paletteno);
@@ -701,7 +711,7 @@ namespace FEBuilderGBA
                 }
                 else
                 {//複数あるパレットの一部を書き換える.
-                    uint write_addr = (uint)(palette_index * 0x20);
+                    uint write_addr = (uint)(palette_index * this.palSize * 2);
                     if (currentdata.Length < write_addr + palttebyte.Length)
                     {//サイズが足りない場合増設する.
                         Array.Resize(ref currentdata, (int)(write_addr + palttebyte.Length));
@@ -731,7 +741,7 @@ namespace FEBuilderGBA
                     return U.NOT_FOUND;
                 }
 
-                addr = addr + (uint)(palette_index * 0x20);
+                addr = addr + (uint)(palette_index * this.palSize * 2);
 
                 Program.Undo.Push(undo_name, addr, (uint)palttebyte.Length);
                 Program.ROM.write_range(addr, palttebyte);
@@ -756,12 +766,12 @@ namespace FEBuilderGBA
                 return;
             }
             Debug.Assert(palette_count >= 1);
-            byte[] palttebyte = new byte[16 * 2 * palette_count];
+            byte[] palttebyte = new byte[palSize * 2 * palette_count];
 
             string undo_name = "PALETTE " + U.To0xHexString(palette_address);
 
 
-            for (int paletteno = 1; paletteno <= 16 * palette_count ; paletteno++)
+            for (int paletteno = 1; paletteno <= palSize * palette_count ; paletteno++)
             {
                 uint dr = (((uint)pal.Entries[paletteno - 1].R) >> 3) & 0x1F;
                 uint dg = (((uint)pal.Entries[paletteno - 1].G) >> 3) & 0x1F;
@@ -778,19 +788,20 @@ namespace FEBuilderGBA
         public bool PALETTE_TO_CLIPBOARD_BUTTON_Click()
         {
             byte[] palttebyte = MakePaletteUIToByte();
-            if (palttebyte.Length < 2 * 16)
+            if (palttebyte.Length < 2 * palSize)
             {
                 return false;
             }
 
             StringBuilder sb = new StringBuilder();
-            for (uint n = 0; n < 16; n ++ )
+            for (uint n = 0; n < palSize; n ++ )
             {
                 uint p = U.big16(palttebyte, n * 2);
                 sb.Append(  p.ToString("X04") );
             }
             PaletteClipboardForm f = (PaletteClipboardForm)InputFormRef.JumpFormLow<PaletteClipboardForm>();
             f.SetPalText(sb.ToString());
+            f.SetPalSize(palSize);
             DialogResult dr = f.ShowDialog();
             if (dr != DialogResult.Yes)
             {
@@ -798,7 +809,7 @@ namespace FEBuilderGBA
             }
 
             string paltext = f.GetPalText();
-            for (uint n = 0; n < 16; n ++ )
+            for (uint n = 0; n < palSize; n ++ )
             {
                 string hexString = U.substr(paltext, (int)n * 4, 4);
                 uint hex = U.atoh(hexString);

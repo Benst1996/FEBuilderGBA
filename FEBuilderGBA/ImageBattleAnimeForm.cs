@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.DirectoryServices.ActiveDirectory;
 using System.Drawing;
 using System.IO;
 using System.Text;
@@ -122,7 +123,7 @@ namespace FEBuilderGBA
                 }
                 , (int i, uint addr) =>
                 {
-                    String animename = Program.ROM.getString(addr, 12);
+                    String animename = Program.ROM.getString(addr, 8);
                     return U.ToHexString(i+1) + U.SA(animename) + InputFormRef.GetCommentSA(addr);
                 }
                 );
@@ -222,6 +223,8 @@ namespace FEBuilderGBA
             uint showFrameData = (uint)ShowFrameUpDown.Value;
             int paletteIndex = (int)ShowPaletteComboBox.SelectedIndex;
 
+            uint additionalProperties = (uint)N_W8.Value;       // Uncompressed palette, FrameData, OAMData, etc.
+            uint faceDirection = ImageUtilOAM.BANIM_FACELEFT;
             uint sectionData = (uint)N_P12.Value;
             uint frameData = (uint)N_P16.Value;
             uint rightToLeftOAM = (uint)N_P20.Value;
@@ -230,14 +233,23 @@ namespace FEBuilderGBA
 
             if (ShowDirectionComboBox.SelectedIndex == 1)
             {//敵軍の位置を表示
-                rightToLeftOAM = leftToRightOAM;
+                faceDirection = ImageUtilOAM.BANIM_FACERIGHT;
             }
 
             Bitmap bitmap = ImageUtilOAM.DrawBattleAnime(showSectionData, showFrameData
-                , sectionData, frameData, rightToLeftOAM, palettes);
+                , sectionData, frameData, faceDirection, rightToLeftOAM, leftToRightOAM, palettes, additionalProperties);
             if (paletteIndex > 0)
             {
-                bitmap = ImageUtil.SwapPalette(bitmap, paletteIndex);
+                if ((additionalProperties & ImageUtilOAM.BA2_AB_2PALETTES) != 0)
+                {
+                    // Double palette.
+                    bitmap = ImageUtil.SwapPalette(bitmap, paletteIndex * 2, 32);
+                }
+                else
+                {
+                    // Single palette.
+                    bitmap = ImageUtil.SwapPalette(bitmap, paletteIndex, 16);
+                }
             }
 
             bool errorOver16Anime;
@@ -279,9 +291,11 @@ namespace FEBuilderGBA
                 return ImageUtil.BlankDummy();
             }
 
+            uint additionalProperties = Program.ROM.u32(addr+8);        // Uncompressed palette, FrameData, OAMData, etc.
             uint sectionData = Program.ROM.u32(addr+12);
             uint frameData = Program.ROM.u32(addr+16);
             uint rightToLeftOAM = Program.ROM.u32(addr+20);
+            uint leftToRightOAM = Program.ROM.u32(addr+24);
             uint palettes = Program.ROM.u32(addr+28);
             if (custompalette > 0)
             {
@@ -293,10 +307,17 @@ namespace FEBuilderGBA
             }
 
             Bitmap bitmap = ImageUtilOAM.DrawBattleAnime(showSectionData, showFrameData
-                , sectionData, frameData, rightToLeftOAM, palettes);
+                , sectionData, frameData, ImageUtilOAM.BANIM_FACELEFT, rightToLeftOAM, leftToRightOAM, palettes, additionalProperties);
             if (showPaletteIndex > 0)
             {
-                bitmap = ImageUtil.SwapPalette(bitmap, showPaletteIndex);
+                if ((additionalProperties & ImageUtilOAM.BA2_AB_2PALETTES) != 0)
+                {
+                    bitmap = ImageUtil.SwapPalette(bitmap, showPaletteIndex*2, 32);
+                }
+                else
+                {
+                    bitmap = ImageUtil.SwapPalette(bitmap, showPaletteIndex);
+                }
             }
 
             
@@ -330,230 +351,230 @@ namespace FEBuilderGBA
             
         }
 
-       //クラスのアニメを取得します。 とりあえず一番最初の奴を.
-       public static uint GetAnimeIDByClassID(uint class_id)
-       {
-           uint battleanime = ClassForm.GetBattleAnimeAddrWhereID(class_id);
-           return GetAnimeIDByAnimeSettingPointer(battleanime);
-       }
-       public static uint GetAnimeIDByAnimeSettingPointer(uint battleanime)
-       {
-           battleanime = U.toOffset(battleanime);
-           if (!U.isSafetyOffset(battleanime))
-           {
-               return 0;
-           }
-           battleanime = U.toOffset(battleanime);
+        //クラスのアニメを取得します。 とりあえず一番最初の奴を.
+        public static uint GetAnimeIDByClassID(uint class_id)
+        {
+            uint battleanime = ClassForm.GetBattleAnimeAddrWhereID(class_id);
+            return GetAnimeIDByAnimeSettingPointer(battleanime);
+        }
+        public static uint GetAnimeIDByAnimeSettingPointer(uint battleanime)
+        {
+            battleanime = U.toOffset(battleanime);
+            if (!U.isSafetyOffset(battleanime))
+            {
+                return 0;
+            }
+            battleanime = U.toOffset(battleanime);
 
-           uint w2 = Program.ROM.u16(battleanime + 2);
-           return w2;
-       }
+            uint w2 = Program.ROM.u16(battleanime + 2);
+            return w2;
+        }
 
-       private void ShowFrameUpDown_ValueChanged(object sender, EventArgs e)
-       {
-           DrawSelectedAnime();
-       }
+        private void ShowFrameUpDown_ValueChanged(object sender, EventArgs e)
+        {
+            DrawSelectedAnime();
+        }
 
-       public void JumpToClassID(uint classid)
-       {
-           if (classid < CLASS_LISTBOX.Items.Count)
-           {
-               CLASS_LISTBOX.SelectedIndex = (int)(classid);
-           }
-           else
-           {
-               CLASS_LISTBOX.SelectedIndex = -1;
-           }
-       }
-       public void JumpToAnimeSettingPointer(uint ptr)
-       {
-           uint cid = ClassForm.GetIDWhereBattleAnimeAddr(ptr);
-           if (cid == U.NOT_FOUND || cid == 0 || cid >= CLASS_LISTBOX.Items.Count)
-           {//クラスに該当の者がない
-               CLASS_LISTBOX.SelectedIndex = -1;
+        public void JumpToClassID(uint classid)
+        {
+            if (classid < CLASS_LISTBOX.Items.Count)
+            {
+                CLASS_LISTBOX.SelectedIndex = (int)(classid);
+            }
+            else
+            {
+                CLASS_LISTBOX.SelectedIndex = -1;
+            }
+        }
+        public void JumpToAnimeSettingPointer(uint ptr)
+        {
+            uint cid = ClassForm.GetIDWhereBattleAnimeAddr(ptr);
+            if (cid == U.NOT_FOUND || cid == 0 || cid >= CLASS_LISTBOX.Items.Count)
+            {//クラスに該当の者がない
+                CLASS_LISTBOX.SelectedIndex = -1;
 
-               uint addr = U.toOffset(ptr);
-               InputFormRef.ReInit(addr);
-               return;
-           }
+                uint addr = U.toOffset(ptr);
+                InputFormRef.ReInit(addr);
+                return;
+            }
 
-           //クラスに該当のものがあるので、クラスを選択してリストを更新する.
-           U.ForceUpdate(CLASS_LISTBOX, (int)cid);
-       }
-       public void JumpToAnimeID(uint animeid)
-       {
-           //ディフォルトフォーカスは戦闘アニメーションのリストの上へ
-           U.SelectedIndexSafety(this.N_AddressList, (int)(animeid), true);
-       }
+            //クラスに該当のものがあるので、クラスを選択してリストを更新する.
+            U.ForceUpdate(CLASS_LISTBOX, (int)cid);
+        }
 
-       public static void MakeComboBattleAnimeSP(ComboBox combo)
-       {
-           combo.BeginUpdate();
-           combo.Items.Clear();
-           combo.Items.Add(R._("0=アイテム指定"));
-           combo.Items.Add(R._("1=種類指定"));
-           combo.Items.Add(R._("2=特殊指定不明"));
-           combo.EndUpdate();
-       }
+        public void JumpToAnimeID(uint animeid)
+        {
+            //ディフォルトフォーカスは戦闘アニメーションのリストの上へ
+            U.SelectedIndexSafety(this.N_AddressList, (int)(animeid), true);
+        }
+
+        public static void MakeComboBattleAnimeSP(ComboBox combo)
+        {
+            combo.BeginUpdate();
+            combo.Items.Clear();
+            combo.Items.Add(R._("0=アイテム指定"));
+            combo.Items.Add(R._("1=種類指定"));
+            combo.Items.Add(R._("2=特殊指定不明"));
+            combo.EndUpdate();
+        }
+
+        public static Bitmap getSPTypeIcon(uint b0, uint b1)
+        {
+            Bitmap bitmap;
+            if (b1 == 0)
+            {//アイテム指定 b0はアイテム名
+                bitmap = ItemForm.DrawIcon(b0);
+            }
+            else if (b1 == 1)
+            {//種類指定
+                if (b0 >= 8)
+                {
+                    bitmap = ImageSystemIconForm.WeaponIcon(8);
+                }
+                else
+                {
+                    bitmap = ImageSystemIconForm.WeaponIcon(b0);
+                }
+            }
+            else
+            {
+                bitmap = ImageSystemIconForm.WeaponIcon(8);
+            }
+            return bitmap;
+        }
+
+        public static string getSPTypeName(uint b0, uint b1)
+        {
+            if (b1==0)
+            {//アイテム指定 b0はアイテム名
+                return ItemForm.GetItemName(b0);
+            }
+            else if (b1 == 1)
+            {//種類指定
+                return InputFormRef.GetWeaponTypeName(b0);
+            }
+            return "??";
+        }
+
+        public static string GetBattleAnimeName(uint id)
+        {
+            if (id <= 0)
+            {
+                return "";
+            }
+            id--;
+
+            InputFormRef InputFormRef = N_Init(null);
+            uint addr = InputFormRef.IDToAddr(id);
+            if (!U.isSafetyOffset(addr))
+            {
+                return "";
+            }
+            return Program.ROM.getString(addr, 8) + InputFormRef.GetCommentSA(addr);
+        }
+
+        private void W2_ValueChanged(object sender, EventArgs e)
+        {
+            int w2 = (int)W2.Value;
+            if (w2 <= 0)
+            {
+                N_AddressList.SelectedIndex = -1;
+                return;
+            }
+
+            w2 = w2 - 1;
+            if (w2 < N_AddressList.Items.Count)
+            {
+                N_AddressList.SelectedIndex = w2;
+            }
+        }
 
 
-       public static Bitmap getSPTypeIcon(uint b0, uint b1)
-       {
-           Bitmap bitmap;
-           if (b1 == 0)
-           {//アイテム指定 b0はアイテム名
-               bitmap = ItemForm.DrawIcon(b0);
-           }
-           else if (b1 == 1)
-           {//種類指定
-               if (b0 >= 8)
-               {
-                   bitmap = ImageSystemIconForm.WeaponIcon(8);
-               }
-               else
-               {
-                   bitmap = ImageSystemIconForm.WeaponIcon(b0);
-               }
-           }
-           else
-           {
-               bitmap = ImageSystemIconForm.WeaponIcon(8);
-           }
-           return bitmap;
-       }
+        //リストが拡張されたとき
+        void AddressListExpandsEvent(object sender, EventArgs arg)
+        {
+            FixBattleAnimeSettingDataOnAddressListExpandsEvent(sender, arg);
+            FixBattleAnimePointerOnAddressListExpandsEvent(sender, arg);
+        }
 
-       public static string getSPTypeName(uint b0, uint b1)
-       {
-           if (b1==0)
-           {//アイテム指定 b0はアイテム名
-               return ItemForm.GetItemName(b0);
-           }
-           else if (b1 == 1)
-           {//種類指定
-               return InputFormRef.GetWeaponTypeName(b0);
-           }
-           return "??";
-       }
+        void FixBattleAnimePointerOnAddressListExpandsEvent(object sender, EventArgs arg)
+        {
+            InputFormRef.ExpandsEventArgs eearg = (InputFormRef.ExpandsEventArgs)arg;
+            uint addr = eearg.NewBaseAddress;
+            int count = (int)eearg.NewDataCount;
 
-       public static string GetBattleAnimeName(uint id)
-       {
-           if (id <= 0)
-           {
-               return "";
-           }
-           id--;
+            if (CLASS_LISTBOX.SelectedIndex < 0)
+            {
+                return;
+            }
 
-           InputFormRef InputFormRef = N_Init(null);
-           uint addr = InputFormRef.IDToAddr(id);
-           if (!U.isSafetyOffset(addr))
-           {
-               return "";
-           }
-           return Program.ROM.getString(addr, 8) + InputFormRef.GetCommentSA(addr);
-       }
+            uint cid = (uint)CLASS_LISTBOX.SelectedIndex;
+            uint pointer;
+            ClassForm.GetBattleAnimeAddrWhereID(cid, out pointer);
+            if (!U.isSafetyOffset(pointer))
+            {
+                return;
+            }
+            uint oldValue = Program.ROM.u32(pointer);
 
-       private void W2_ValueChanged(object sender, EventArgs e)
-       {
-           int w2 = (int)W2.Value;
-           if (w2 <= 0)
-           {
-               N_AddressList.SelectedIndex = -1;
-               return;
-           }
+            Undo.UndoData undodata = Program.Undo.NewUndoData(this, "FixBattleAnimeSetting");
+            //クラスの戦闘アニメポインタを更新する.
+            Program.ROM.write_p32(pointer, addr, undodata);
+            Program.Undo.Push(undodata);
 
-           w2 = w2 - 1;
-           if (w2 < N_AddressList.Items.Count)
-           {
-               N_AddressList.SelectedIndex = w2;
-           }
-       }
+            this.InputFormRef.ReInit(addr, (uint)count);
 
+            if (oldValue == 0)
+            {//元の値が0の場合は自動更新のターゲットにならないので強制的に補正します
+                if (Program.ROM.RomInfo.version == 6)
+                {
+                    ClassFE6Form f = (ClassFE6Form)InputFormRef.GetForm<ClassForm>();
+                    if (f != null)
+                    {
+                        f.ForceUpdateBattleAnimationUIIf0(addr);
+                    }
+                }
+                else
+                {
+                    ClassForm f = (ClassForm)InputFormRef.GetForm<ClassForm>();
+                    if (f != null)
+                    {
+                        f.ForceUpdateBattleAnimationUIIf0(addr);
+                    }
+                }
+            }
+        }
 
-       //リストが拡張されたとき
-       void AddressListExpandsEvent(object sender, EventArgs arg)
-       {
-           FixBattleAnimeSettingDataOnAddressListExpandsEvent(sender, arg);
-           FixBattleAnimePointerOnAddressListExpandsEvent(sender, arg);
-       }
+        void FixBattleAnimeSettingDataOnAddressListExpandsEvent(object sender, EventArgs arg)
+        {
+            InputFormRef.ExpandsEventArgs eearg = (InputFormRef.ExpandsEventArgs)arg;
+            uint addr = eearg.NewBaseAddress;
+            int count = (int)eearg.NewDataCount;
 
-       void FixBattleAnimePointerOnAddressListExpandsEvent(object sender, EventArgs arg)
-       {
-           InputFormRef.ExpandsEventArgs eearg = (InputFormRef.ExpandsEventArgs)arg;
-           uint addr = eearg.NewBaseAddress;
-           int count = (int)eearg.NewDataCount;
+            uint rom_length = (uint)Program.ROM.Data.Length;
 
-           if (CLASS_LISTBOX.SelectedIndex < 0)
-           {
-               return;
-           }
+            Undo.UndoData undodata = Program.Undo.NewUndoData(this, "FixBattleAnimeSetting");
 
-           uint cid = (uint)CLASS_LISTBOX.SelectedIndex;
-           uint pointer;
-           ClassForm.GetBattleAnimeAddrWhereID(cid, out pointer);
-           if (!U.isSafetyOffset(pointer))
-           {
-               return;
-           }
-           uint oldValue = Program.ROM.u32(pointer);
+            //途中にnullが含まれている場合は、補正します.
+            for (int i = 0; i < count; i++)
+            {
+                if (addr + 4 > rom_length)
+                {
+                    Log.Error("ROM Broken! Address after allocation is out of range. {0}+2/{1}", U.ToHexString8(addr), U.ToHexString8(rom_length));
+                    break;
+                }
+                if (Program.ROM.u32(addr + 0) == 0)
+                {//アドレスが空だったら増やす必要がある
+                    //とりあえずアイテム、剣、アニメ1
+                    Program.ROM.write_u8(addr + 0, 0x0, undodata);
+                    Program.ROM.write_u8(addr + 1, 0x1, undodata);
+                    Program.ROM.write_u16(addr + 2, 0x1, undodata);
+                }
 
-           Undo.UndoData undodata = Program.Undo.NewUndoData(this, "FixBattleAnimeSetting");
-           //クラスの戦闘アニメポインタを更新する.
-           Program.ROM.write_p32(pointer, addr, undodata);
-           Program.Undo.Push(undodata);
-
-           this.InputFormRef.ReInit(addr, (uint)count);
-
-           if (oldValue == 0)
-           {//元の値が0の場合は自動更新のターゲットにならないので強制的に補正します
-               if (Program.ROM.RomInfo.version == 6)
-               {
-                   ClassFE6Form f = (ClassFE6Form)InputFormRef.GetForm<ClassForm>();
-                   if (f != null)
-                   {
-                       f.ForceUpdateBattleAnimationUIIf0(addr);
-                   }
-               }
-               else
-               {
-                   ClassForm f = (ClassForm)InputFormRef.GetForm<ClassForm>();
-                   if (f != null)
-                   {
-                       f.ForceUpdateBattleAnimationUIIf0(addr);
-                   }
-               }
-           }
-       }
-
-       void FixBattleAnimeSettingDataOnAddressListExpandsEvent(object sender, EventArgs arg)
-       {
-           InputFormRef.ExpandsEventArgs eearg = (InputFormRef.ExpandsEventArgs)arg;
-           uint addr = eearg.NewBaseAddress;
-           int count = (int)eearg.NewDataCount;
-
-           uint rom_length = (uint)Program.ROM.Data.Length;
-
-           Undo.UndoData undodata = Program.Undo.NewUndoData(this, "FixBattleAnimeSetting");
-
-           //途中にnullが含まれている場合は、補正します.
-           for (int i = 0; i < count; i++)
-           {
-               if (addr + 4 > rom_length)
-               {
-                   Log.Error("ROM Broken! Address after allocation is out of range. {0}+2/{1}", U.ToHexString8(addr), U.ToHexString8(rom_length));
-                   break;
-               }
-               if (Program.ROM.u32(addr + 0) == 0)
-               {//アドレスが空だったら増やす必要がある
-                   //とりあえずアイテム、剣、アニメ1
-                   Program.ROM.write_u8(addr + 0, 0x0, undodata);
-                   Program.ROM.write_u8(addr + 1, 0x1, undodata);
-                   Program.ROM.write_u16(addr + 2, 0x1, undodata);
-               }
-
-               addr += eearg.BlockSize;
-           }
-           Program.Undo.Push(undodata);
-       }
+                addr += eearg.BlockSize;
+            }
+            Program.Undo.Push(undodata);
+        }
 
        public static string GetBattleAnimeHint(uint search_animeindex)
        {
@@ -594,134 +615,142 @@ namespace FEBuilderGBA
            return "";
        }
 
-       private void BattleAnimeExportButton_Click(object sender, EventArgs e)
-       {
-           uint battleanime_baseaddress = InputFormRef.SelectToAddr(N_AddressList);
-           if (battleanime_baseaddress == U.NOT_FOUND)
-           {
-               return;
-           }
+        private void BattleAnimeExportButton_Click(object sender, EventArgs e)
+        {
+            uint battleanime_baseaddress = InputFormRef.SelectToAddr(N_AddressList);
+            if (battleanime_baseaddress == U.NOT_FOUND)
+            {
+                return;
+            }
 
-           string title = R._("保存するファイル名を選択してください");
-           string filter = R._("FEditorシリアライズ形式|*.bin|バトルアニメ コメントあり|*.txt|バトルアニメ コメントなし|*.txt|アニメGIF|*.gif|Dump All|*.bin|All files|*");
+            // Can't export banims with additional properties set.
+            uint additionalProperties = (uint)N_W8.Value;        // Uncompressed palette, FrameData, OAMData, etc.
+            if (additionalProperties != 0)
+            {
+                R.ShowStopError("This banim has additional properties set and can therefore not be exported.");
+                return;
+            }
+
+            string title = R._("保存するファイル名を選択してください");
+            string filter = R._("FEditorシリアライズ形式|*.bin|バトルアニメ コメントあり|*.txt|バトルアニメ コメントなし|*.txt|アニメGIF|*.gif|Dump All|*.bin|All files|*");
            
-           SaveFileDialog save = new SaveFileDialog();
-           save.Title = title;
-           save.Filter = filter;
-           Program.LastSelectedFilename.Load(this, "", save,N_L_0_SPLITSTRING_11.Text);
+            SaveFileDialog save = new SaveFileDialog();
+            save.Title = title;
+            save.Filter = filter;
+            Program.LastSelectedFilename.Load(this, "", save,N_L_0_SPLITSTRING_7.Text);
 
-           DialogResult dr = save.ShowDialog();
-           if (dr != DialogResult.OK)
-           {
-               return;
-           }
-           if (save.FileNames.Length <= 0 || !U.CanWriteFileRetry(save.FileNames[0]))
-           {
-               return;
-           }
-           string filename = save.FileNames[0];
-           Program.LastSelectedFilename.Save(this, "", save);
+            DialogResult dr = save.ShowDialog();
+            if (dr != DialogResult.OK)
+            {
+                return;
+            }
+            if (save.FileNames.Length <= 0 || !U.CanWriteFileRetry(save.FileNames[0]))
+            {
+                return;
+            }
+            string filename = save.FileNames[0];
+            Program.LastSelectedFilename.Save(this, "", save);
 
-           uint sectionData = (uint)N_P12.Value;
-           uint frameData = (uint)N_P16.Value;
-           uint rightToLeftOAM = (uint)N_P20.Value;
-           uint leftToRightOAM = (uint)N_P24.Value;
-           uint palettes = (uint)N_P28.Value;
+            uint sectionData = (uint)N_P12.Value;
+            uint frameData = (uint)N_P16.Value;
+            uint rightToLeftOAM = (uint)N_P20.Value;
+            uint leftToRightOAM = (uint)N_P24.Value;
+            uint palettes = (uint)N_P28.Value;
 
-           string filehint = GetBattleAnimeHint((uint)N_AddressList.SelectedIndex+1);
-           if (filehint == "")
-           {//不明な場合、 FE7にある個別バトルにも問い合わせる
-               filehint = UnitCustomBattleAnimeForm.GetBattleAnimeHint((uint)N_AddressList.SelectedIndex+1);
-           }
-           filehint = N_AddressList.Text + " " + filehint;
-           int palette_count = ImageUtilOAM.CalcMaxPaletteCount(sectionData, frameData, rightToLeftOAM, palettes);
+            string filehint = GetBattleAnimeHint((uint)N_AddressList.SelectedIndex+1);
+            if (filehint == "")
+            {//不明な場合、 FE7にある個別バトルにも問い合わせる
+                filehint = UnitCustomBattleAnimeForm.GetBattleAnimeHint((uint)N_AddressList.SelectedIndex+1);
+            }
+            filehint = N_AddressList.Text + " " + filehint;
+            int palette_count = ImageUtilOAM.CalcMaxPaletteCount(sectionData, frameData, rightToLeftOAM, palettes);
 
-           string ext = U.GetFilenameExt(save.FileName);
-           if (save.FilterIndex == 5)
-           {//dump all
-               {
-                   string name = U.ChangeExtFilename(filename, ".gif");
-                   uint showSectionData = U.atoh(ShowSectionCombo.Text) - 1;
-                   ImageUtilOAM.ExportBattleAnimeGIF(name, showSectionData
+            string ext = U.GetFilenameExt(save.FileName);
+            if (save.FilterIndex == 5)
+            {//dump all
+                {
+                    string name = U.ChangeExtFilename(filename, ".gif");
+                    uint showSectionData = U.atoh(ShowSectionCombo.Text) - 1;
+                    ImageUtilOAM.ExportBattleAnimeGIF(name, showSectionData
                         , sectionData, frameData, rightToLeftOAM, palettes, palette_count);
-               }
-               {
-                   string name = U.ChangeExtFilename(filename, ".bin");
-                   ImageUtilOAM.ExportBattleAnimeOnFEditorSerialize(name, battleanime_baseaddress
+                }
+                {
+                    string name = U.ChangeExtFilename(filename, ".bin");
+                    ImageUtilOAM.ExportBattleAnimeOnFEditorSerialize(name, battleanime_baseaddress
                         , sectionData, frameData, rightToLeftOAM, leftToRightOAM, palettes, palette_count);
-               }
-               {
-                   string name = U.ChangeExtFilename(filename, ".txt");
-                   bool enableComment = false;
-                   ImageUtilOAM.ExportBattleAnime(filehint, enableComment, name
+                }
+                {
+                    string name = U.ChangeExtFilename(filename, ".txt");
+                    bool enableComment = false;
+                    ImageUtilOAM.ExportBattleAnime(filehint, enableComment, name
                         , sectionData, frameData, rightToLeftOAM, palettes, palette_count);
-                   string without_comment_name = U.ChangeExtFilename(filename, ".txt" , "_without_comment");
-                   U.Move(name, without_comment_name);
-               }
-               {
-                   string name = U.ChangeExtFilename(filename, ".txt");
-                   bool enableComment = true;
-                   ImageUtilOAM.ExportBattleAnime(filehint, enableComment, name
+                    string without_comment_name = U.ChangeExtFilename(filename, ".txt" , "_without_comment");
+                    U.Move(name, without_comment_name);
+                }
+                {
+                    string name = U.ChangeExtFilename(filename, ".txt");
+                    bool enableComment = true;
+                    ImageUtilOAM.ExportBattleAnime(filehint, enableComment, name
                         , sectionData, frameData, rightToLeftOAM, palettes, palette_count);
-               }
-           }
-           else if (save.FilterIndex == 4 || ext == ".GIF")
-           {
-               uint showSectionData = U.atoh(ShowSectionCombo.Text) - 1;
-               ImageUtilOAM.ExportBattleAnimeGIF(filename, showSectionData
+                }
+            }
+            else if (save.FilterIndex == 4 || ext == ".GIF")
+            {
+                uint showSectionData = U.atoh(ShowSectionCombo.Text) - 1;
+                ImageUtilOAM.ExportBattleAnimeGIF(filename, showSectionData
                     , sectionData, frameData, rightToLeftOAM, palettes, palette_count);
-           }
-           else if (save.FilterIndex == 0 || ext == ".BIN")
-           {
-               ImageUtilOAM.ExportBattleAnimeOnFEditorSerialize(filename, battleanime_baseaddress
+            }
+            else if (save.FilterIndex == 0 || ext == ".BIN")
+            {
+                ImageUtilOAM.ExportBattleAnimeOnFEditorSerialize(filename, battleanime_baseaddress
                     , sectionData, frameData, rightToLeftOAM, leftToRightOAM, palettes, palette_count);
-           }
-           else
-           {
-               bool enableComment = true;
-               if (save.FilterIndex == 3)
-               {
-                   enableComment = false;
-               }
-               ImageUtilOAM.ExportBattleAnime(filehint, enableComment, filename
+            }
+            else
+            {
+                bool enableComment = true;
+                if (save.FilterIndex == 3)
+                {
+                    enableComment = false;
+                }
+                ImageUtilOAM.ExportBattleAnime(filehint, enableComment, filename
                     , sectionData, frameData, rightToLeftOAM, palettes, palette_count);
-           }
+            }
 
-           //エクスプローラで選択しよう
-           U.SelectFileByExplorer(filename);
-       }
+            //エクスプローラで選択しよう
+            U.SelectFileByExplorer(filename);
+        }
 
-       private void BattleAnimeImportButton_Click(object sender, EventArgs e)
-       {
-           if (InputFormRef.IsPleaseWaitDialog(this))
-           {//2重割り込み禁止
-               return;
-           }
+        private void BattleAnimeImportButton_Click(object sender, EventArgs e)
+        {
+            if (InputFormRef.IsPleaseWaitDialog(this))
+            {//2重割り込み禁止
+                return;
+            }
 
-           string filename;
-           if (ImageFormRef.GetDragFilePath(out filename))
-           {
-           }
-           else
-           {
-               string title = R._("開くファイル名を選択してください");
-               string filter = R._("戦闘アニメ|*.bin;*.txt|FEditorシリアライズ形式|*.bin|FEditorシリアライズ形式(ワイルドカード)|*|バトルアニメ テキスト形式|*.txt|All files|*");
+            string filename;
+            if (ImageFormRef.GetDragFilePath(out filename))
+            {
+            }
+            else
+            {
+                string title = R._("開くファイル名を選択してください");
+                string filter = R._("戦闘アニメ|*.bin;*.txt|FEditorシリアライズ形式|*.bin|FEditorシリアライズ形式(ワイルドカード)|*|バトルアニメ テキスト形式|*.txt|All files|*");
 
-               OpenFileDialog open = new OpenFileDialog();
-               open.Title = title;
-               open.Filter = filter;
-               Program.LastSelectedFilename.Load(this, "", open);
-               DialogResult dr = open.ShowDialog();
-               if (dr != DialogResult.OK)
-               {
-                   return;
-               }
-               if (!U.CanReadFileRetry(open))
-               {
-                   return;
-               }
-               Program.LastSelectedFilename.Save(this, "", open);
-               filename = open.FileNames[0];
+                OpenFileDialog open = new OpenFileDialog();
+                open.Title = title;
+                open.Filter = filter;
+                Program.LastSelectedFilename.Load(this, "", open);
+                DialogResult dr = open.ShowDialog();
+                if (dr != DialogResult.OK)
+                {
+                    return;
+                }
+                if (!U.CanReadFileRetry(open))
+                {
+                    return;
+                }
+                Program.LastSelectedFilename.Save(this, "", open);
+                filename = open.FileNames[0];
             }
 
             //OAM最適化パッチ
@@ -738,192 +767,200 @@ namespace FEBuilderGBA
             }
         }
 
+        public string BattleAnimeImportDirect(uint id,string filename)
+        {
+            if (InputFormRef.IsPleaseWaitDialog(this))
+            {//2重割り込み禁止
+                return R._("現在他の処理中です");
+            }
 
-       public string BattleAnimeImportDirect(uint id,string filename)
-       {
-           if (InputFormRef.IsPleaseWaitDialog(this))
-           {//2重割り込み禁止
-               return R._("現在他の処理中です");
-           }
+            if (id <= 0)
+            {
+                return R._("指定されたID({0})は存在しません。", U.To0xHexString(id)) ;
+            }
 
-           if (id <= 0)
-           {
-               return R._("指定されたID({0})は存在しません。", U.To0xHexString(id)) ;
-           }
+            uint battleanime_baseaddress = N_InputFormRef.IDToAddr(id - 1);
+            if (battleanime_baseaddress == U.NOT_FOUND)
+            {
+                return R._("指定されたID({0})は存在しません。", U.To0xHexString(id));
+            }
 
-           uint battleanime_baseaddress = N_InputFormRef.IDToAddr(id - 1);
-           if (battleanime_baseaddress == U.NOT_FOUND)
-           {
-               return R._("指定されたID({0})は存在しません。", U.To0xHexString(id));
-           }
+            string error = "";
 
-           string error = "";
+            //少し時間がかかるので、しばらくお待ちください表示.
+            using (InputFormRef.AutoPleaseWait pleaseWait = new InputFormRef.AutoPleaseWait(this))
+            {
+                uint top_battleanime_baseaddress = N_InputFormRef.BaseAddress;
+                uint bottum_battleanime_baseaddress = N_InputFormRef.BaseAddress + (N_InputFormRef.BlockSize * N_InputFormRef.DataCount);
 
-           //少し時間がかかるので、しばらくお待ちください表示.
-           using (InputFormRef.AutoPleaseWait pleaseWait = new InputFormRef.AutoPleaseWait(this))
-           {
-               uint top_battleanime_baseaddress = N_InputFormRef.BaseAddress;
-               uint bottum_battleanime_baseaddress = N_InputFormRef.BaseAddress + (N_InputFormRef.BlockSize * N_InputFormRef.DataCount);
+                string ext = U.GetFilenameExt(filename);
+                if (ext == ".TXT")
+                {//テキスト形式
+                    error = ImageUtilOAM.ImportBattleAnime(filename
+                        , battleanime_baseaddress
+                        , top_battleanime_baseaddress
+                        , bottum_battleanime_baseaddress);
+                }
+                else if (ext == "" || ext == ".BIN")
+                {//拡張子なし FEditorシリアライズ
+                    error = ImageUtilOAM.ImportBattleAnimeOnFEditorSerialize(filename
+                        , battleanime_baseaddress
+                        , top_battleanime_baseaddress
+                        , bottum_battleanime_baseaddress);
+                }
+                else
+                {
+                    return R._("未対応の拡張子({0})が指定されました。",ext);
+                }
+            }
 
-               string ext = U.GetFilenameExt(filename);
-               if (ext == ".TXT")
-               {//テキスト形式
-                   error = ImageUtilOAM.ImportBattleAnime(filename
-                       , battleanime_baseaddress
-                       , top_battleanime_baseaddress
-                       , bottum_battleanime_baseaddress);
-               }
-               else if (ext == "" || ext == ".BIN")
-               {//拡張子なし FEditorシリアライズ
-                   error = ImageUtilOAM.ImportBattleAnimeOnFEditorSerialize(filename
-                       , battleanime_baseaddress
-                       , top_battleanime_baseaddress
-                       , bottum_battleanime_baseaddress);
-               }
-               else
-               {
-                   return R._("未対応の拡張子({0})が指定されました。",ext);
-               }
-           }
+            if (error != "")
+            {
+                return error;
+            }
 
-           if (error != "")
-           {
-               return error;
-           }
+            Program.ResourceCache.Update("BattleAnime_" + U.ToHexString(id), filename);
+            this.OpenSourceButton.Show();
+            this.SelectSourceButton.Show();
 
-           Program.ResourceCache.Update("BattleAnime_" + U.ToHexString(id), filename);
-           this.OpenSourceButton.Show();
-           this.SelectSourceButton.Show();
+            //選択しているところを再選択して画面を再描画
+            U.ReSelectList(N_AddressList);
+            //書き込み通知
+            InputFormRef.ShowWriteNotifyAnimation(this, battleanime_baseaddress);
 
-           //選択しているところを再選択して画面を再描画
-           U.ReSelectList(N_AddressList);
-           //書き込み通知
-           InputFormRef.ShowWriteNotifyAnimation(this, battleanime_baseaddress);
+            return "";
+        }
 
-           return "";
-       }
+        private void X_N_JumpEditor_Click(object sender, EventArgs e)
+        {
+            if (InputFormRef.IsPleaseWaitDialog(this))
+            {//2重割り込み禁止
+                return;
+            }
 
-       private void X_N_JumpEditor_Click(object sender, EventArgs e)
-       {
-           if (InputFormRef.IsPleaseWaitDialog(this))
-           {//2重割り込み禁止
-               return;
-           }
+            uint battleanime_baseaddress = InputFormRef.SelectToAddr(N_AddressList);
+            if(battleanime_baseaddress == U.NOT_FOUND)
+            {
+                return ;
+            }
 
-           uint battleanime_baseaddress = InputFormRef.SelectToAddr(N_AddressList);
-           if(battleanime_baseaddress == U.NOT_FOUND)
-           {
-               return ;
-           }
-           uint sectionData = (uint)N_P12.Value;
-           uint frameData = (uint)N_P16.Value;
-           uint rightToLeftOAM = (uint)N_P20.Value;
-           uint leftToRightOAM = (uint)N_P24.Value;
-           uint palettes = (uint)N_P28.Value;
+            uint additionalProperties = (uint)N_W8.Value;        // Uncompressed palette, FrameData, OAMData, etc.
+            uint sectionData = (uint)N_P12.Value;
+            uint frameData = (uint)N_P16.Value;
+            uint rightToLeftOAM = (uint)N_P20.Value;
+            uint leftToRightOAM = (uint)N_P24.Value;
+            uint palettes = (uint)N_P28.Value;
+           
+            // Can't edit banims with additional properties set.
+            if (additionalProperties != 0)
+            {
+                R.ShowStopError("This banim has additional properties set and can therefore not be edited.");
+                return;
+            }
 
-           uint ID = (uint)N_AddressList.SelectedIndex + 1;
+            uint ID = (uint)N_AddressList.SelectedIndex + 1;
 
-           string filehint = GetBattleAnimeHint(ID);
-           if (filehint == "")
-           {//不明な場合、 FE7にある個別バトルにも問い合わせる
-               filehint = UnitCustomBattleAnimeForm.GetBattleAnimeHint((uint)N_AddressList.SelectedIndex + 1);
-           }
-           filehint = N_AddressList.Text + " " + filehint;
-           int palette_count = ImageUtilOAM.CalcMaxPaletteCount(sectionData, frameData, rightToLeftOAM, palettes);
+            string filehint = GetBattleAnimeHint(ID);
+            if (filehint == "")
+            {//不明な場合、 FE7にある個別バトルにも問い合わせる
+                filehint = UnitCustomBattleAnimeForm.GetBattleAnimeHint((uint)N_AddressList.SelectedIndex + 1);
+            }
+            filehint = N_AddressList.Text + " " + filehint;
+            int palette_count = ImageUtilOAM.CalcMaxPaletteCount(sectionData, frameData, rightToLeftOAM, palettes);
 
-           //少し時間がかかるので、しばらくお待ちください表示.
-           using (InputFormRef.AutoPleaseWait pleaseWait = new InputFormRef.AutoPleaseWait(this))
-           //テンポラリディレクトリを利用する
-           using (U.MakeTempDirectory tempdir = new U.MakeTempDirectory())
-           {
-               string filename = Path.Combine(tempdir.Dir, "anime.txt");
-               ImageUtilOAM.ExportBattleAnime("", false, filename
+            //少し時間がかかるので、しばらくお待ちください表示.
+            using (InputFormRef.AutoPleaseWait pleaseWait = new InputFormRef.AutoPleaseWait(this))
+            //テンポラリディレクトリを利用する
+            using (U.MakeTempDirectory tempdir = new U.MakeTempDirectory())
+            {
+                string filename = Path.Combine(tempdir.Dir, "anime.txt");
+                ImageUtilOAM.ExportBattleAnime("", false, filename
                     , sectionData, frameData, rightToLeftOAM, palettes, palette_count);
-               if (!File.Exists(filename))
-               {
-                   R.ShowStopError("アニメーションエディタを表示するために、アニメーションをエクスポートしようとしましたが、アニメをファイルにエクスポートできませんでした。\r\n\r\nファイル:{0}", filename);
-                   return;
-               }
-               byte[] paletteBIN = LZ77.decompress(Program.ROM.Data, U.toOffset(palettes));
+                if (!File.Exists(filename))
+                {
+                    R.ShowStopError("アニメーションエディタを表示するために、アニメーションをエクスポートしようとしましたが、アニメをファイルにエクスポートできませんでした。\r\n\r\nファイル:{0}", filename);
+                    return;
+                }
+                byte[] paletteBIN = LZ77.decompress(Program.ROM.Data, U.toOffset(palettes));
 
-               ToolAnimationCreatorForm f = (ToolAnimationCreatorForm)InputFormRef.JumpFormLow<ToolAnimationCreatorForm>();
-               f.Init( ToolAnimationCreatorUserControl.AnimationTypeEnum.BattleAnime
-                   , ID, filehint, filename, paletteBIN);
-               f.Show();
-               f.Focus();
-           }
-       }
+                ToolAnimationCreatorForm f = (ToolAnimationCreatorForm)InputFormRef.JumpFormLow<ToolAnimationCreatorForm>();
+                f.Init( ToolAnimationCreatorUserControl.AnimationTypeEnum.BattleAnime
+                    , ID, filehint, filename, paletteBIN);
+                f.Show();
+                f.Focus();
+            }
+        }
 
-       private void ShowZoom_SelectedIndexChanged(object sender, EventArgs e)
-       {
-           if (ShowZoomComboBox.SelectedIndex == 0)
-           {
-               X_B_ANIME_PIC2.SizeMode = PictureBoxSizeMode.Zoom;
-           }
-           else
-           {
-               X_B_ANIME_PIC2.SizeMode = PictureBoxSizeMode.Normal;
-           }
-       }
+        private void ShowZoom_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (ShowZoomComboBox.SelectedIndex == 0)
+            {
+                X_B_ANIME_PIC2.SizeMode = PictureBoxSizeMode.Zoom;
+            }
+            else
+            {
+                X_B_ANIME_PIC2.SizeMode = PictureBoxSizeMode.Normal;
+            }
+        }
 
-//       public static uint CalcBattleAnimeSettingDataLength(uint addr)
-//       {
-//           InputFormRef InputFormRef = Init(null);
-//          InputFormRef.ReInit(addr);
-//           return InputFormRef.DataCount * InputFormRef.BlockSize;
-//       }
+    //       public static uint CalcBattleAnimeSettingDataLength(uint addr)
+    //       {
+    //           InputFormRef InputFormRef = Init(null);
+    //          InputFormRef.ReInit(addr);
+    //           return InputFormRef.DataCount * InputFormRef.BlockSize;
+    //       }
 
-       public static void MakeBattleAnimeSettingDataLength(List<Address> list, uint battleAnimeSettingPointer,string selfname)
-       {
-           InputFormRef InputFormRef = Init(null);
-           InputFormRef.ReInitPointer(battleAnimeSettingPointer);
+        public static void MakeBattleAnimeSettingDataLength(List<Address> list, uint battleAnimeSettingPointer,string selfname)
+        {
+            InputFormRef InputFormRef = Init(null);
+            InputFormRef.ReInitPointer(battleAnimeSettingPointer);
 
-           FEBuilderGBA.AddressWinForms.AddAddress(list, InputFormRef
-               , selfname, new uint[] { });
-       }
+            FEBuilderGBA.AddressWinForms.AddAddress(list, InputFormRef
+                , selfname, new uint[] { });
+        }
 
-       //誤爆すると面倒なことになるフレームとOAMのデータ群
-       public static void MakeBattleFrameAndOAMDictionary(Dictionary<uint,bool> dic)
-       {
-           InputFormRef N_InputFormRef = N_Init(null);
+        //誤爆すると面倒なことになるフレームとOAMのデータ群
+        public static void MakeBattleFrameAndOAMDictionary(Dictionary<uint,bool> dic)
+        {
+            InputFormRef N_InputFormRef = N_Init(null);
 
-           uint addr = N_InputFormRef.BaseAddress;
-           for (uint i = 0; i < N_InputFormRef.DataCount; i++, addr += N_InputFormRef.BlockSize)
-           {
-               dic[ Program.ROM.p32(addr + 12) ] = true; //Section
-               dic[Program.ROM.p32(addr + 16)] = true; //frame
-               dic[Program.ROM.p32(addr + 20)] = true; //OAM1
-               dic[Program.ROM.p32(addr + 24)] = true; //OAM2
-               dic[Program.ROM.p32(addr + 28)] = true; //Palette
-           }
-       }
-       //全データの取得
-       public static void MakeAllDataLength(List<Address> list, bool isPointerOnly )
-       {
-           string selfname ;
-           InputFormRef InputFormRef = Init(null);
+            uint addr = N_InputFormRef.BaseAddress;
+            for (uint i = 0; i < N_InputFormRef.DataCount; i++, addr += N_InputFormRef.BlockSize)
+            {
+                dic[ Program.ROM.p32(addr + 12) ] = true; //Section
+                dic[Program.ROM.p32(addr + 16)] = true; //frame
+                dic[Program.ROM.p32(addr + 20)] = true; //OAM1
+                dic[Program.ROM.p32(addr + 24)] = true; //OAM2
+                dic[Program.ROM.p32(addr + 28)] = true; //Palette
+            }
+        }
+        //全データの取得
+        public static void MakeAllDataLength(List<Address> list, bool isPointerOnly )
+        {
+            string selfname ;
+            InputFormRef InputFormRef = Init(null);
 
-           uint addr;
-           List<AddrResult> classList = ClassForm.MakeClassList();
-           for (uint cid = 0; cid < classList.Count; cid++)
-           {
-               uint pointer;
-               uint class_addr = classList[(int)cid].addr;
-               addr = ClassForm.GetBattleAnimeAddrWhereAddr(class_addr, out pointer);
-               if (!U.isSafetyOffset(addr))
-               {
-                   continue;
-               }
-               InputFormRef.ReInitPointer(pointer);
+            uint addr;
+            List<AddrResult> classList = ClassForm.MakeClassList();
+            for (uint cid = 0; cid < classList.Count; cid++)
+            {
+                uint pointer;
+                uint class_addr = classList[(int)cid].addr;
+                addr = ClassForm.GetBattleAnimeAddrWhereAddr(class_addr, out pointer);
+                if (!U.isSafetyOffset(addr))
+                {
+                    continue;
+                }
+                InputFormRef.ReInitPointer(pointer);
 
-               selfname = "BattleAnimeSeting:" + U.To0xHexString(cid);
-               FEBuilderGBA.AddressWinForms.AddAddress(list,InputFormRef
-                   , selfname, new uint[] { });
-           }
+                selfname = "BattleAnimeSeting:" + U.To0xHexString(cid);
+                FEBuilderGBA.AddressWinForms.AddAddress(list,InputFormRef
+                    , selfname, new uint[] { });
+            }
 
-           selfname = "BattleAnime";
-           InputFormRef N_InputFormRef = N_Init(null);
-           FEBuilderGBA.AddressWinForms.AddAddress(list, N_InputFormRef, selfname, new uint[] {12,16,20,24,28 });
+            selfname = "BattleAnime";
+            InputFormRef N_InputFormRef = N_Init(null);
+            FEBuilderGBA.AddressWinForms.AddAddress(list, N_InputFormRef, selfname, new uint[] {12,16,20,24,28 });
 
             //戦闘アニメーションはlz77圧縮の中にポインタがある特殊形式です
             addr = N_InputFormRef.BaseAddress;
@@ -943,80 +980,113 @@ namespace FEBuilderGBA
                 selfname = "BattleAnime:" + U.To0xHexString(i + 1);
                 ImageUtilOAM.MakeAllDataLength(list, isPointerOnly, selfname, addr, seatNumberList);
             }
-       }
+        }
 
-       //変更するアニメデータから、他のアニメーションでも使っているものを除外する
-       public static void MakeAllDataLength(RecycleAddress ra, uint Now_baseaddress)
-       {
-           InputFormRef N_InputFormRef = N_Init(null);
+        //変更するアニメデータから、他のアニメーションでも使っているものを除外する
+        public static void MakeAllDataLength(RecycleAddress ra, uint Now_baseaddress)
+        {
+            InputFormRef N_InputFormRef = N_Init(null);
 
-           //戦闘アニメーションはlz77圧縮の中にポインタがある特殊形式です
-           uint addr = N_InputFormRef.BaseAddress;
-           for (int i = 0; i < N_InputFormRef.DataCount; i++, addr += N_InputFormRef.BlockSize)
-           {
-               if (!U.isSafetyOffset(12 + addr + 4))
-               {
-                   break;
-               }
+            //戦闘アニメーションはlz77圧縮の中にポインタがある特殊形式です
+            uint addr = N_InputFormRef.BaseAddress;
+            for (int i = 0; i < N_InputFormRef.DataCount; i++, addr += N_InputFormRef.BlockSize)
+            {
+                if (!U.isSafetyOffset(12 + addr + 4))
+                {
+                    break;
+                }
 
-               uint section = Program.ROM.p32(12 + addr);
-               if (!U.isSafetyOffset(section))
-               {
-                   break;
-               }
+                uint section = Program.ROM.p32(12 + addr);
+                if (!U.isSafetyOffset(section))
+                {
+                    break;
+                }
 
-               if (addr == Now_baseaddress)
-               {
-                   continue;
-               }
+                if (addr == Now_baseaddress)
+                {
+                    continue;
+                }
 
-               List<Address> list = new List<Address>();
-               ImageUtilOAM.RecycleOldAnime(ref list, addr);
-               ra.SubRecycle(list);
-           }
-       }
-       public static List<AddrResult> MakeBattleList()
-       {
-           InputFormRef N_InputFormRef = N_Init(null);
-           return N_InputFormRef.MakeList();
-       }
+                List<Address> list = new List<Address>();
+                ImageUtilOAM.RecycleOldAnime(ref list, addr);
+                ra.SubRecycle(list);
+            }
+        }
+        public static List<AddrResult> MakeBattleList()
+        {
+            InputFormRef N_InputFormRef = N_Init(null);
+            return N_InputFormRef.MakeList();
+        }
 
-       private void ShowPaletteComboBox_SelectedIndexChanged(object sender, EventArgs e)
-       {
-           DrawSelectedAnime();
-       }
-
-
+        private void ShowPaletteComboBox_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            DrawSelectedAnime();
+        }
 
 
-       private void N_J_28_Click(object sender, EventArgs e)
-       {
-           X_N_JumpPalette.PerformClick();
-       }
-       private void X_N_JumpPalette_Click(object sender, EventArgs e)
-       {
-           ImageBattleAnimePalletForm f = (ImageBattleAnimePalletForm)InputFormRef.JumpFormLow<ImageBattleAnimePalletForm>();
-           f.JumpTo((uint)N_AddressList.SelectedIndex + 1
-               , (uint)N_P28.Value
-               , (int)ShowPaletteComboBox.SelectedIndex);
-           f.FormClosed += (s, ee) =>
-           {
-               if (this.IsDisposed)
-               {
-                   return;
-               }
-               U.ReSelectList(this.N_AddressList);
-           };
-           f.Show();
-       }
 
-       //斧使いが、手斧のモーションを持っているかテストする.
-       static void MakeCheckErrorAxs(InputFormRef ifr
-           , InputFormRef N_ifr
-           , List<AddrResult> axsItems
-           , List<AddrResult> classList
-           , uint cid
-           , List<FELint.ErrorSt> errors)
+
+        private void N_J_28_Click(object sender, EventArgs e)
+        {
+            X_N_JumpPalette.PerformClick();
+        }
+        private void X_N_JumpPalette_Click(object sender, EventArgs e)
+        {
+
+            uint additionalProperties = (uint)N_W8.Value;        // Uncompressed palette, FrameData, OAMData, etc.
+            bool IsCompressed = true;
+
+            // Distinguish between compressed and uncompressed palettes.
+            if ((additionalProperties & ImageUtilOAM.BA2_AB_UNCOMPPALDATA) != 0)
+            {
+                IsCompressed = false;
+            }
+
+            // Different form for 32-colour banims.
+            // We assume palette is not compressed either.
+            if ((additionalProperties & ImageUtilOAM.BA2_AB_2PALETTES) != 0)
+            {
+                ImageBattleAnimePalletDoubleForm f = (ImageBattleAnimePalletDoubleForm)InputFormRef.JumpFormLow<ImageBattleAnimePalletDoubleForm>();
+                f.IsCompressed = IsCompressed;
+                f.JumpTo((uint)N_AddressList.SelectedIndex + 1
+                , (uint)N_P28.Value
+                , (int)ShowPaletteComboBox.SelectedIndex);
+                f.FormClosed += (s, ee) =>
+                {
+                    if (this.IsDisposed)
+                    {
+                        return;
+                    }
+                    U.ReSelectList(this.N_AddressList);
+                };
+                f.Show();
+            }
+            else
+            {
+                ImageBattleAnimePalletForm f = (ImageBattleAnimePalletForm)InputFormRef.JumpFormLow<ImageBattleAnimePalletForm>();
+                f.IsCompressed = IsCompressed;
+                f.JumpTo((uint)N_AddressList.SelectedIndex + 1
+                , (uint)N_P28.Value
+                , (int)ShowPaletteComboBox.SelectedIndex);
+                f.FormClosed += (s, ee) =>
+                {
+                    if (this.IsDisposed)
+                    {
+                        return;
+                    }
+                    U.ReSelectList(this.N_AddressList);
+                };
+                f.Show();
+            }
+        }
+
+        //斧使いが、手斧のモーションを持っているかテストする.
+        static void MakeCheckErrorAxs(InputFormRef ifr
+            , InputFormRef N_ifr
+            , List<AddrResult> axsItems
+            , List<AddrResult> classList
+            , uint cid
+            , List<FELint.ErrorSt> errors)
         {
             bool axsUser = false;
             uint axsMotionID = 0;
@@ -1089,228 +1159,228 @@ namespace FEBuilderGBA
             }
         }
 
-       static bool HasMagicMotion(InputFormRef N_ifr
-           , uint battleAnimationID)
-       {
-           uint battleAnimationIDMinus1 = battleAnimationID - 1;
-           if (battleAnimationIDMinus1 >= N_ifr.DataCount)
-           {
-               return false;
-           }
+        static bool HasMagicMotion(InputFormRef N_ifr
+            , uint battleAnimationID)
+        {
+            uint battleAnimationIDMinus1 = battleAnimationID - 1;
+            if (battleAnimationIDMinus1 >= N_ifr.DataCount)
+            {
+                return false;
+            }
 
-           uint p = N_ifr.BaseAddress + (battleAnimationIDMinus1 * N_ifr.BlockSize);
-           return ImageUtilOAM.HasMagicMotion(p);
-       }
+            uint p = N_ifr.BaseAddress + (battleAnimationIDMinus1 * N_ifr.BlockSize);
+            return ImageUtilOAM.HasMagicMotion(p);
+        }
 
         //エラーチェック
         public static void MakeCheckError(List<FELint.ErrorSt> errors)
         {
-           InputFormRef N_InputFormRef = N_Init(null);
+            InputFormRef N_InputFormRef = N_Init(null);
             
-           bool isFE6 = (Program.ROM.RomInfo.version == 6);
-           if (!isFE6)
-           {//FE6の場合、パラディンなどが手斧モーションを持っていない.
+            bool isFE6 = (Program.ROM.RomInfo.version == 6);
+            if (!isFE6)
+            {//FE6の場合、パラディンなどが手斧モーションを持っていない.
             //そのため、FE7,FE8だけチェックします.
-               InputFormRef InputFormRef = Init(null);
+                InputFormRef InputFormRef = Init(null);
 
-               List<AddrResult> handAxsItems = ItemForm.MakeItemListByHandAxs();
-               List<AddrResult> classList = ClassForm.MakeClassList();
-               for (uint cid = 1; cid < classList.Count; cid++)
-               {
-                   uint pointer;
-                   uint class_addr = classList[(int)cid].addr;
-                   uint addr = ClassForm.GetBattleAnimeAddrWhereAddr(class_addr, out pointer);
-                   if (addr == 0)
-                   {
-                       continue;
-                   }
-                   if (!U.isSafetyOffset(addr))
-                   {
-                       errors.Add(new FELint.ErrorSt(FELint.Type.CLASS, class_addr
-                           , R._("クラス({0})の{1}のポインタ({2})が危険です。"
-                           , classList[(int)cid].name ,R._("戦闘アニメ"), U.To0xHexString(addr)), cid));
-                       continue;
-                   }
+                List<AddrResult> handAxsItems = ItemForm.MakeItemListByHandAxs();
+                List<AddrResult> classList = ClassForm.MakeClassList();
+                for (uint cid = 1; cid < classList.Count; cid++)
+                {
+                    uint pointer;
+                    uint class_addr = classList[(int)cid].addr;
+                    uint addr = ClassForm.GetBattleAnimeAddrWhereAddr(class_addr, out pointer);
+                    if (addr == 0)
+                    {
+                        continue;
+                    }
+                    if (!U.isSafetyOffset(addr))
+                    {
+                        errors.Add(new FELint.ErrorSt(FELint.Type.CLASS, class_addr
+                            , R._("クラス({0})の{1}のポインタ({2})が危険です。"
+                            , classList[(int)cid].name ,R._("戦闘アニメ"), U.To0xHexString(addr)), cid));
+                        continue;
+                    }
 
                     InputFormRef.ReInit(addr);
                     MakeCheckErrorAxs(InputFormRef, N_InputFormRef
                         , handAxsItems, classList, cid, errors);
-               }
-           }
+                }
+            }
 
-           {
-               if (N_InputFormRef.DataCount < 10)
-               {
-                   errors.Add(new FELint.ErrorSt(FELint.Type.BATTLE_ANIME, U.NOT_FOUND
-                       , R._("戦闘アニメが極端に少ないです。破損している可能性があります。")));
-               }
+            {
+                if (N_InputFormRef.DataCount < 10)
+                {
+                    errors.Add(new FELint.ErrorSt(FELint.Type.BATTLE_ANIME, U.NOT_FOUND
+                        , R._("戦闘アニメが極端に少ないです。破損している可能性があります。")));
+                }
 
-               List<uint> seatNumberList = new List<uint>(256);
-               uint p = N_InputFormRef.BaseAddress;
-               for (int i = 0; i < N_InputFormRef.DataCount; i++, p += N_InputFormRef.BlockSize)
-               {
-                   if (isFE6 && i == 0x6c)
-                   {
-                       continue;
-                   }
-                   ImageUtilOAM.MakeCheckError(errors, p, (uint)(i), seatNumberList);
-               }
-           }
-       }
+                List<uint> seatNumberList = new List<uint>(256);
+                uint p = N_InputFormRef.BaseAddress;
+                for (int i = 0; i < N_InputFormRef.DataCount; i++, p += N_InputFormRef.BlockSize)
+                {
+                    if (isFE6 && i == 0x6c)
+                    {
+                        continue;
+                    }
+                    ImageUtilOAM.MakeCheckError(errors, p, (uint)(i), seatNumberList);
+                }
+            }
+        }
 
-       //他のクラスでこのデータを参照しているか?
-       bool UpdateIndependencePanel()
-       {
-           if (this.CLASS_LISTBOX.SelectedIndex < 0)
-           {
-               return false;
-           }
-           uint classid = (uint)U.atoh(this.CLASS_LISTBOX.Text);
+        //他のクラスでこのデータを参照しているか?
+        bool UpdateIndependencePanel()
+        {
+            if (this.CLASS_LISTBOX.SelectedIndex < 0)
+            {
+                return false;
+            }
+            uint classid = (uint)U.atoh(this.CLASS_LISTBOX.Text);
 
-           uint currentP = ClassForm.GetBattleAnimeAddrWhereID(classid);
-           if (!U.isSafetyOffset(currentP))
-           {
-               return false;
-           }
+            uint currentP = ClassForm.GetBattleAnimeAddrWhereID(classid);
+            if (!U.isSafetyOffset(currentP))
+            {
+                return false;
+            }
 
-           uint class_count = (uint)this.CLASS_LISTBOX.Items.Count;
-           for (uint i = 0; i < class_count; i++)
-           {
-               if (i == classid)
-               {//自分自身
-                   continue;
-               }
-               uint p = ClassForm.GetBattleAnimeAddrWhereID(i);
-               if (p == currentP)
-               {
-                   return true;
-               }
-           }
+            uint class_count = (uint)this.CLASS_LISTBOX.Items.Count;
+            for (uint i = 0; i < class_count; i++)
+            {
+                if (i == classid)
+                {//自分自身
+                    continue;
+                }
+                uint p = ClassForm.GetBattleAnimeAddrWhereID(i);
+                if (p == currentP)
+                {
+                    return true;
+                }
+            }
 
-           return false;
-       }
-       private void IndependenceButton_Click(object sender, EventArgs e)
-       {
-           if (this.CLASS_LISTBOX.SelectedIndex < 0)
-           {
-               return;
-           }
-           uint classid = (uint)U.atoh(this.CLASS_LISTBOX.Text);
-           uint classaddr = ClassForm.GetClassAddr(classid);
-           string name = U.ToHexString(classid) + " " + ClassForm.GetClassNameLow(classaddr);
+            return false;
+        }
+        private void IndependenceButton_Click(object sender, EventArgs e)
+        {
+            if (this.CLASS_LISTBOX.SelectedIndex < 0)
+            {
+                return;
+            }
+            uint classid = (uint)U.atoh(this.CLASS_LISTBOX.Text);
+            uint classaddr = ClassForm.GetClassAddr(classid);
+            string name = U.ToHexString(classid) + " " + ClassForm.GetClassNameLow(classaddr);
 
-           uint pointer;
-           uint currentP = ClassForm.GetBattleAnimeAddrWhereID(classid, out pointer);
-           if (!U.isSafetyOffset(currentP))
-           {
-               return;
-           }
-           if (InputFormRef.DataCount == 0)
-           {
-               DialogResult dr = R.ShowNoYes("リストが0件です。\r\n空のリストを分離させても意味がないのですが、それでも分離独立させますか？");
-               if (dr != DialogResult.Yes)
-               {
-                   return;
-               }
-           }
+            uint pointer;
+            uint currentP = ClassForm.GetBattleAnimeAddrWhereID(classid, out pointer);
+            if (!U.isSafetyOffset(currentP))
+            {
+                return;
+            }
+            if (InputFormRef.DataCount == 0)
+            {
+                DialogResult dr = R.ShowNoYes("リストが0件です。\r\n空のリストを分離させても意味がないのですが、それでも分離独立させますか？");
+                if (dr != DialogResult.Yes)
+                {
+                    return;
+                }
+            }
 
-           Undo.UndoData undodata = Program.Undo.NewUndoData(this, this.Name + " Independence");
+            Undo.UndoData undodata = Program.Undo.NewUndoData(this, this.Name + " Independence");
 
-           uint dataSize = (InputFormRef.DataCount + 1) * InputFormRef.BlockSize;
-           PatchUtil.WriteIndependence(currentP, dataSize, pointer, name, undodata);
-           Program.Undo.Push(undodata);
+            uint dataSize = (InputFormRef.DataCount + 1) * InputFormRef.BlockSize;
+            PatchUtil.WriteIndependence(currentP, dataSize, pointer, name, undodata);
+            Program.Undo.Push(undodata);
 
-           InputFormRef.ShowWriteNotifyAnimation(this, currentP);
+            InputFormRef.ShowWriteNotifyAnimation(this, currentP);
 
-           U.ReSelectList(this.CLASS_LISTBOX);
-       }
+            U.ReSelectList(this.CLASS_LISTBOX);
+        }
 
-       private void ReadStartAddress_ValueChanged(object sender, EventArgs e)
-       {
-           ZeroPointerPanel.Visible = InputFormRef.ShowZeroPointerPanel(this.CLASS_LISTBOX, this.ReadStartAddress);
-       }
+        private void ReadStartAddress_ValueChanged(object sender, EventArgs e)
+        {
+            ZeroPointerPanel.Visible = InputFormRef.ShowZeroPointerPanel(this.CLASS_LISTBOX, this.ReadStartAddress);
+        }
 
-       private void LinkInternt_Click(object sender, EventArgs e)
-       {
-           MainFormUtil.GotoMoreData();
-       }
+        private void LinkInternt_Click(object sender, EventArgs e)
+        {
+            MainFormUtil.GotoMoreData();
+        }
 
 
-       static uint All_ToolAutoGenLeftToRightAllAnimation(InputFormRef.AutoPleaseWait pleaseWait, Undo.UndoData undodata)
-       {
-           uint totalSize = 0;
+        static uint All_ToolAutoGenLeftToRightAllAnimation(InputFormRef.AutoPleaseWait pleaseWait, Undo.UndoData undodata)
+        {
+            uint totalSize = 0;
 
-           //テーブル拡張などで同じOAMが複数個所にある場合の対処
-           Dictionary<uint, uint> convertHistory = new Dictionary<uint, uint>();
+            //テーブル拡張などで同じOAMが複数個所にある場合の対処
+            Dictionary<uint, uint> convertHistory = new Dictionary<uint, uint>();
 
-           InputFormRef N_InputFormRef = N_Init(null);
-           uint addr = N_InputFormRef.BaseAddress;
-           for (uint i = 0; i < N_InputFormRef.DataCount; i++, addr += N_InputFormRef.BlockSize)
-           {
-               uint rightToLeftOAMAddress = Program.ROM.p32(addr + 20);
-               uint leftToRightOAMAddress = Program.ROM.p32(addr + 24);
-               if (rightToLeftOAMAddress == leftToRightOAMAddress)
-               {//処理済み
-                   continue;
-               }
+            InputFormRef N_InputFormRef = N_Init(null);
+            uint addr = N_InputFormRef.BaseAddress;
+            for (uint i = 0; i < N_InputFormRef.DataCount; i++, addr += N_InputFormRef.BlockSize)
+            {
+                uint rightToLeftOAMAddress = Program.ROM.p32(addr + 20);
+                uint leftToRightOAMAddress = Program.ROM.p32(addr + 24);
+                if (rightToLeftOAMAddress == leftToRightOAMAddress)
+                {//処理済み
+                    continue;
+                }
 
-               //実はさっき処理していますか?
-               //Ｄ拡張などで同じデータが複数個ある場合への配慮.
-               uint convertAddress;
-               if (convertHistory.TryGetValue(leftToRightOAMAddress, out convertAddress))
-               {
-                   Program.ROM.write_p32(addr + 24, convertAddress, undodata);
-                   continue;
-               }
+                //実はさっき処理していますか?
+                //Ｄ拡張などで同じデータが複数個ある場合への配慮.
+                uint convertAddress;
+                if (convertHistory.TryGetValue(leftToRightOAMAddress, out convertAddress))
+                {
+                    Program.ROM.write_p32(addr + 24, convertAddress, undodata);
+                    continue;
+                }
 
-               byte[] rightToLeftOAMBin = LZ77.decompress(Program.ROM.Data, rightToLeftOAMAddress);
-               byte[] leftToRightOAMBin = LZ77.decompress(Program.ROM.Data, leftToRightOAMAddress);
+                byte[] rightToLeftOAMBin = LZ77.decompress(Program.ROM.Data, rightToLeftOAMAddress);
+                byte[] leftToRightOAMBin = LZ77.decompress(Program.ROM.Data, leftToRightOAMAddress);
 
-               List<byte> rightToLeftOAMArray = new List<byte>(rightToLeftOAMBin);
-               List<byte> leftToRightOAMArray = new List<byte>(leftToRightOAMBin);
+                List<byte> rightToLeftOAMArray = new List<byte>(rightToLeftOAMBin);
+                List<byte> leftToRightOAMArray = new List<byte>(leftToRightOAMBin);
 
-               if (! ImageUtilOAM.IsMatchOAM(rightToLeftOAMArray, leftToRightOAMArray))
-               {//鏡写しではないので、自動生成できません。
-                   continue;
-               }
-               pleaseWait.DoEvents(R._("{0} 削減サイズ:{1}", U.To0xHexString(i), totalSize));
+                if (! ImageUtilOAM.IsMatchOAM(rightToLeftOAMArray, leftToRightOAMArray))
+                {//鏡写しではないので、自動生成できません。
+                    continue;
+                }
+                pleaseWait.DoEvents(R._("{0} 削減サイズ:{1}", U.To0xHexString(i), totalSize));
 
-               //データを自動生成できるので、ポインタを共有します
-               Program.ROM.write_p32(addr + 24, rightToLeftOAMAddress, undodata);
-               //不要なデータを消去します
-               uint leftToRightOAMSize = LZ77.getCompressedSize(Program.ROM.Data, leftToRightOAMAddress);
-               Program.ROM.write_fill(leftToRightOAMAddress, leftToRightOAMSize, 0, undodata);
+                //データを自動生成できるので、ポインタを共有します
+                Program.ROM.write_p32(addr + 24, rightToLeftOAMAddress, undodata);
+                //不要なデータを消去します
+                uint leftToRightOAMSize = LZ77.getCompressedSize(Program.ROM.Data, leftToRightOAMAddress);
+                Program.ROM.write_fill(leftToRightOAMAddress, leftToRightOAMSize, 0, undodata);
 
-               convertHistory[leftToRightOAMAddress] = rightToLeftOAMAddress;
-               totalSize += leftToRightOAMSize;
-           }
-           return totalSize;
-       }
+                convertHistory[leftToRightOAMAddress] = rightToLeftOAMAddress;
+                totalSize += leftToRightOAMSize;
+            }
+            return totalSize;
+        }
 
-       public static void Execute_ToolAutoGenLeftToRightAllAnimation()
-       {
-           if (!HowDoYouLikePatchForm.CheckAndShowPopupDialog(HowDoYouLikePatchForm.TYPE.AutoGenLeftOAMPatch))
-           {
-               R.ShowStopError("必要なパッチ「AutoGenLeftOAM」がインストールされていません。");
-               return;
-           }
+        public static void Execute_ToolAutoGenLeftToRightAllAnimation()
+        {
+            if (!HowDoYouLikePatchForm.CheckAndShowPopupDialog(HowDoYouLikePatchForm.TYPE.AutoGenLeftOAMPatch))
+            {
+                R.ShowStopError("必要なパッチ「AutoGenLeftOAM」がインストールされていません。");
+                return;
+            }
 
-           DialogResult dr = R.ShowNoYes("戦闘アニメーションをスキャンして、LeftToRightOAMを消せるものはすべて消します。\r\nすでに処理されているデータはスキップするので何度実行しても理論上は安全です。\r\n\r\n実行してもよろしいですか？");
-           if (dr != DialogResult.Yes)
-           {
-               return;
-           }
+            DialogResult dr = R.ShowNoYes("戦闘アニメーションをスキャンして、LeftToRightOAMを消せるものはすべて消します。\r\nすでに処理されているデータはスキップするので何度実行しても理論上は安全です。\r\n\r\n実行してもよろしいですか？");
+            if (dr != DialogResult.Yes)
+            {
+                return;
+            }
 
-           uint totalSize = 0;
-           using (InputFormRef.AutoPleaseWait pleaseWait = new InputFormRef.AutoPleaseWait())
-           {
-               Undo.UndoData undodata = Program.Undo.NewUndoData("ToolAutoGenLeftToRightAllAnimation");
-               totalSize = All_ToolAutoGenLeftToRightAllAnimation(pleaseWait, undodata);
-               Program.Undo.Push(undodata);
-           }
+            uint totalSize = 0;
+            using (InputFormRef.AutoPleaseWait pleaseWait = new InputFormRef.AutoPleaseWait())
+            {
+                Undo.UndoData undodata = Program.Undo.NewUndoData("ToolAutoGenLeftToRightAllAnimation");
+                totalSize = All_ToolAutoGenLeftToRightAllAnimation(pleaseWait, undodata);
+                Program.Undo.Push(undodata);
+            }
 
-           R.ShowOK("完了しました。\r\n{0}バイトの領域を解放できました。", totalSize);
-       }
+            R.ShowOK("完了しました。\r\n{0}バイトの領域を解放できました。", totalSize);
+        }
 
         private void OpenSourceButton_Click(object sender, EventArgs e)
         {
