@@ -15,7 +15,7 @@ namespace FEBuilderGBA.Avalonia.ViewModels
     /// Gap-sweep fix (#417) raises density from 3 to MEDIUM verdict and
     /// wires the tag-aware Dim/NoDim/Empty round-trip.
     /// </summary>
-    public class ImageMagicCSACreatorViewModel : ViewModelBase, IDataVerifiable
+    public partial class ImageMagicCSACreatorViewModel : ViewModelBase, IDataVerifiable
     {
         // Block size for the CSA struct: 5 x 4-byte pointers = 20 bytes.
         public const uint BLOCK_SIZE = 20;
@@ -242,6 +242,127 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             // CommentCache lives in the EtcCache layer, not the ROM bytes
             // (Copilot CLI inline review #4 on PR #547).
             CoreState.CommentCache?.Update(CurrentAddr, Comment ?? "");
+        }
+
+        /// <summary>True when the spell-data table is expanded past the
+        /// original per-version magic count, i.e. the "Data Expansion" button
+        /// should be hidden. Mirrors WF
+        /// <c>MagicListExpandsButton.Enabled = false</c> when
+        /// <c>DataCount &gt; magic_effect_original_data_count</c>.</summary>
+        public bool IsListExpanded
+        {
+            get
+            {
+                var rom = CoreState.ROM;
+                if (rom?.RomInfo == null) return false;
+                return _spellDataCount > rom.RomInfo.magic_effect_original_data_count;
+            }
+        }
+
+        /// <summary>
+        /// Expand the magic-effect pointer table (table-1) AND the CSA spell
+        /// table (table-2) to the fixed <see cref="MagicListExpandCore.NewCount"/>
+        /// (254) rows via the all-reference path
+        /// (<see cref="MagicListExpandCore.ExpandMagicLists"/> →
+        /// <see cref="DataExpansionCore.ExpandTableTo"/> +
+        /// <see cref="DataExpansionCore.RepointAllReferences"/>). Mirrors WF
+        /// <c>ImageMagicCSACreatorForm.MagicListExpandsButton_Click</c> (#837;
+        /// byte-identical to the FEditor handler).
+        ///
+        /// <para>The CSA spell-table-pointer discovery + NOT_FOUND clean-abort
+        /// runs FIRST inside the Core helper (before the table-1 expand), so a
+        /// ROM without the CSA table is rejected with ZERO mutation.</para>
+        /// </summary>
+        /// <param name="undo">Active undo buffer (same transaction).</param>
+        /// <returns>Empty string on success, an error message otherwise.</returns>
+        public string ExpandMagicLists(Undo.UndoData undo)
+        {
+            var rom = CoreState.ROM;
+            if (rom?.RomInfo == null) return R._("ROM not loaded.");
+
+            // table-1 current count = magic-effect spell-data count.
+            uint magicEffectCurrentCount = MagicCSACore.ComputeSpellDataCount(rom);
+            // table-2 current count = the displayed list row count (WF
+            // InputFormRef.DataCount).
+            uint csaCurrentCount = (uint)LoadList().Count;
+
+            var result = MagicListExpandCore.ExpandMagicLists(
+                rom, magicEffectCurrentCount, csaCurrentCount, undo);
+            if (!result.Success)
+                return result.Error ?? R._("Table expansion failed.");
+
+            // NOTE B: refresh the cached spell-data count from the grown table.
+            _spellDataCount = MagicCSACore.ComputeSpellDataCount(rom);
+            return "";
+        }
+
+        // ---- #1021 — live CSA frame preview (READ-ONLY) ----
+
+        /// <summary>
+        /// True when <see cref="RenderCsaFramePreview"/> can produce a non-null
+        /// image (the CSA Creator magic system is detected and an entry is
+        /// loaded). Gates the live preview re-render in the view, mirroring the
+        /// FEditor <c>CanExportMagicFrame</c> gate.
+        /// </summary>
+        public bool CanRenderPreview =>
+            _magicKind == MagicSystemKind.CsaCreator && IsLoaded;
+
+        /// <summary>
+        /// Render the currently-selected CSA frame as a 240×128 live preview using
+        /// the live P0/Frame/P4/P12 values (READ-ONLY). Mirrors the FEditor
+        /// <c>RenderMagicFramePreview</c>: gated on <c>rom != null</c> +
+        /// <c>MagicKind == CsaCreator</c> + <c>IsLoaded</c>, then delegates to
+        /// <see cref="MagicEffectExportCore.RenderCsaFramePreview"/>.
+        ///
+        /// <para>Pointer mapping (CSA): P0 = frame-data; P4 = OBJRightToLeft OAM;
+        /// P12 = OBJBGRightToLeft OAM.</para>
+        /// </summary>
+        /// <param name="log">Diagnostic text (empty on success, reason on null).</param>
+        /// <returns>A 240×128 <see cref="IImage"/>, or <c>null</c>.</returns>
+        public IImage RenderCsaFramePreview(out string log)
+        {
+            log = string.Empty;
+            var rom = CoreState.ROM;
+            if (rom == null)
+            {
+                log = "ROM not loaded.";
+                return null;
+            }
+            if (_magicKind != MagicSystemKind.CsaCreator)
+            {
+                log = "CSA Creator magic system not detected.";
+                return null;
+            }
+            if (!IsLoaded)
+            {
+                log = "No CSA entry loaded.";
+                return null;
+            }
+            // P0=frameData, P4=OBJRightToLeftOAM, P12=OBJBGRightToLeftOAM.
+            var img = MagicEffectExportCore.RenderCsaFramePreview(rom, P0, Frame, P4, P12);
+            if (img == null) log = "Frame render produced no image.";
+            return img;
+        }
+
+        /// <summary>
+        /// Count of 0x86 frames in the currently-loaded CSA animation (P0
+        /// frame-data stream). Used by the view to bound <c>FrameBox.Maximum</c>.
+        /// Returns 0 when no system / entry is loaded. READ-ONLY.
+        /// </summary>
+        public int GetFrameCount()
+        {
+            var rom = CoreState.ROM;
+            if (rom == null) return 0;
+            if (_magicKind != MagicSystemKind.CsaCreator) return 0;
+            if (!IsLoaded) return 0;
+
+            List<int> sharedObjSlots, sharedBgSlots;
+            List<MagicFrameMeta> frames;
+            MagicEffectExportCore.ExportMagicScriptLines(
+                rom, P0, string.Empty, false,
+                out sharedObjSlots, out sharedBgSlots, out frames,
+                isCsa: true);
+            return frames.Count;
         }
 
         // ---- IDataVerifiable ----

@@ -7,10 +7,13 @@
 // both the manifest and the click-handler wiring — see
 // `SongInstrumentViewModel.NavigationTargets.cs`.
 using System;
+using System.IO;
 using global::Avalonia.Controls;
 using global::Avalonia.Interactivity;
+using FEBuilderGBA.Avalonia.Dialogs;
 using FEBuilderGBA.Avalonia.Services;
 using FEBuilderGBA.Avalonia.ViewModels;
+using FEBuilderGBA.Core;
 
 namespace FEBuilderGBA.Avalonia.Views
 {
@@ -478,6 +481,342 @@ namespace FEBuilderGBA.Avalonia.Views
                 _undoService.Rollback();
                 Log.Error("SongInstrumentView.Write_Click failed: {0}", ex.Message);
             }
+        }
+
+        // -----------------------------------------------------------------
+        // DirectSound wave Export/Import (#1057 N00/N08; #1001 PR1 N10/N18). The
+        // N00 (0x00), N08 (0x08 "DirectSound Fixed Freq"), N10 (0x10 "DirectSound
+        // Reverse") and N18 (0x18 "DirectSound Fixed Freq Reverse") voices ALL
+        // share the EXACT same on-ROM sample format (header type byte at +0,
+        // sample pointer P4 at +4) — the "Reverse"/"Fixed Freq" variants only
+        // change the instrument-entry PLAYBACK type, not the P4 sample header/body
+        // (Copilot-confirmed). So all four reuse SongDirectSoundWavCore.ExportWave
+        // / ImportWave verbatim. N03 (Wave Memory) stays DISABLED.
+        //
+        // The gates use the VM's LoadedHeaderByte (the on-ROM byte captured at
+        // LoadEntry), NOT the mutable HeaderByte/Category, so a loaded 0x10/0x18
+        // entry switched to the N08 tab in-memory cannot be repointed as if it
+        // were a 0x08 voice (#1057 Copilot plan review pt 1). The shared
+        // ExportWaveGated / ImportWaveGated helpers take the active tab's P4 box
+        // name so each tab updates its OWN P4 box (N00->N00_P4_Box, ...,
+        // N18->N18_P4_Box).
+        // -----------------------------------------------------------------
+
+        async void N00_Export_Click(object? sender, RoutedEventArgs e)
+        {
+            // Gate on the LOADED ROM byte (0x00), not the mutable category.
+            await ExportWaveGated(_vm.IsLoadedDirectSound);
+        }
+
+        async void N00_Import_Click(object? sender, RoutedEventArgs e)
+        {
+            await ImportWaveGated(_vm.IsLoadedDirectSound, "N00_P4_Box");
+        }
+
+        async void N08_Export_Click(object? sender, RoutedEventArgs e)
+        {
+            // Gate on the LOADED ROM byte 0x08.
+            await ExportWaveGated(_vm.IsLoadedDirectSoundFixedFreq);
+        }
+
+        async void N08_Import_Click(object? sender, RoutedEventArgs e)
+        {
+            // Import slot is THIS entry's own P4 (CurrentAddr + 4) and the success
+            // update targets N08_P4_Box (not N00_P4_Box).
+            await ImportWaveGated(_vm.IsLoadedDirectSoundFixedFreq, "N08_P4_Box");
+        }
+
+        async void N10_Export_Click(object? sender, RoutedEventArgs e)
+        {
+            // N10 (DirectSound Reverse, 0x10): same DirectSound sample layout as
+            // N00/N08 (Copilot-confirmed). Gate on the LOADED ROM byte 0x10.
+            await ExportWaveGated(_vm.IsLoadedDirectSoundReverse);
+        }
+
+        async void N10_Import_Click(object? sender, RoutedEventArgs e)
+        {
+            // Import slot is THIS entry's own P4 (CurrentAddr + 4); success updates
+            // the N10 tab's OWN P4 box.
+            await ImportWaveGated(_vm.IsLoadedDirectSoundReverse, "N10_P4_Box");
+        }
+
+        async void N18_Export_Click(object? sender, RoutedEventArgs e)
+        {
+            // N18 (DirectSound Fixed Freq Reverse, 0x18): same DirectSound sample
+            // layout as N00/N08/N10. Gate on the LOADED ROM byte 0x18.
+            await ExportWaveGated(_vm.IsLoadedDirectSoundFixedFreqReverse);
+        }
+
+        async void N18_Import_Click(object? sender, RoutedEventArgs e)
+        {
+            await ImportWaveGated(_vm.IsLoadedDirectSoundFixedFreqReverse, "N18_P4_Box");
+        }
+
+        // Shared DirectSound wave EXPORT used by N00 + N08. Reads the pointer value
+        // _vm.WavePtr (= rom.u32(CurrentAddr+4)) and decodes it via the Core seam.
+        async System.Threading.Tasks.Task ExportWaveGated(bool gate)
+        {
+            if (!_vm.IsLoaded) return;
+            if (!gate)
+            {
+                CoreState.Services.ShowError(
+                    R._("This instrument is not a DirectSound voice; there is no wave sample to export."));
+                return;
+            }
+
+            try
+            {
+                byte[] wav = SongDirectSoundWavCore.ExportWave(CoreState.ROM, _vm.WavePtr);
+                if (wav == null)
+                {
+                    CoreState.Services.ShowError(
+                        R._("Could not decode the DirectSound sample. The wave pointer may be invalid."));
+                    return;
+                }
+
+                string suggested = $"wave_0x{_vm.CurrentAddr:X06}.wav";
+                string? path = await FileDialogHelper.SaveFile(
+                    this, R._("Export Wave"), R._("Wave Files"), "*.wav", suggested);
+                if (string.IsNullOrEmpty(path)) return;
+
+                File.WriteAllBytes(path, wav);
+                CoreState.Services.ShowInfo(R._("Wave exported to {0}", path));
+            }
+            catch (Exception ex)
+            {
+                Log.Error("SongInstrumentView.ExportWaveGated failed: {0}", ex.Message);
+                CoreState.Services.ShowError(R._("Wave export failed: {0}", ex.Message));
+            }
+        }
+
+        // Shared DirectSound wave IMPORT used by N00 + N08. Imports a WAV as a new
+        // GBA sample (append + P4 repoint), under the view's undo scope, then
+        // updates the active tab's P4 box (p4BoxName).
+        async System.Threading.Tasks.Task ImportWaveGated(bool gate, string p4BoxName)
+        {
+            if (!_vm.IsLoaded) return;
+            if (!gate)
+            {
+                CoreState.Services.ShowError(
+                    R._("This instrument is not a DirectSound voice; a wave sample cannot be imported here."));
+                return;
+            }
+
+            try
+            {
+                string? path = await FileDialogHelper.OpenFile(this, R._("Import Wave"), "*.wav");
+                if (string.IsNullOrEmpty(path)) return;
+
+                byte[] bytes = File.ReadAllBytes(path);
+
+                _undoService.Begin("Import DirectSound Wave");
+                try
+                {
+                    // P4 wave-pointer slot = THIS voice entry +4 (passed as OFFSET;
+                    // ImportWave converts it to a GBA pointer via write_p32).
+                    uint newPtr = SongDirectSoundWavCore.ImportWave(
+                        CoreState.ROM, _vm.CurrentAddr + 4, bytes, out string err);
+                    if (newPtr == U.NOT_FOUND)
+                    {
+                        _undoService.Rollback();
+                        CoreState.Services.ShowError(err ?? R._("Wave import failed."));
+                        return;
+                    }
+
+                    _vm.WavePtr = newPtr;
+                    SetNumericByName(p4BoxName, _vm.WavePtr);
+                    _undoService.Commit();
+                    _vm.MarkClean();
+                    CoreState.Services.ShowInfo(R._("Wave imported. The sample pointer is now 0x{0:X08}.", newPtr));
+                }
+                catch (Exception ex)
+                {
+                    _undoService.Rollback();
+                    Log.Error("SongInstrumentView.ImportWaveGated failed: {0}", ex.Message);
+                    CoreState.Services.ShowError(R._("Wave import failed: {0}", ex.Message));
+                }
+            }
+            catch (Exception ex)
+            {
+                // Pre-Begin scope: the file dialog / File.ReadAllBytes can throw
+                // (permissions, missing/locked file) BEFORE _undoService.Begin, so
+                // no undo scope is open here and no Rollback is needed. Surface a
+                // user-facing error instead of failing silently (Copilot review).
+                Log.Error("SongInstrumentView.ImportWaveGated: {0}", ex.Message);
+                CoreState.Services?.ShowError(R._("Wave import failed: {0}", ex.Message));
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // InstExport (#1057) — recursive READ-ONLY voicegroup export. Writes a TSV
+        // index of the loaded voicegroup plus per-voice side files via the Core
+        // seam SongInstrumentSetCore.ExportAll. Read-only — NO UndoService. The
+        // Core emits RELATIVE filename tokens; the delegates resolve them against
+        // the chosen index file's directory (#1057 Copilot plan review pt 3).
+        // The recursive InstImport stays deferred to PR 2.
+        // -----------------------------------------------------------------
+        async void InstExport_Click(object? sender, RoutedEventArgs e)
+        {
+            if (!_vm.IsLoaded) return;
+            if (CoreState.ROM == null) return;
+
+            // The voicegroup base the editor is currently editing.
+            uint vocaBase = _vm.BaseAddr;
+            if (vocaBase == 0)
+            {
+                CoreState.Services.ShowError(
+                    R._("No instrument set (voicegroup) is loaded to export."));
+                return;
+            }
+
+            try
+            {
+                string? path = await FileDialogHelper.SaveFile(
+                    this, R._("Export Instrument"), R._("Instrument Set"), "*.instrument",
+                    $"voicegroup_0x{vocaBase:X06}.instrument");
+                if (string.IsNullOrEmpty(path)) return;
+
+                string dir = Path.GetDirectoryName(path) ?? ".";
+                string baseName = Path.GetFileNameWithoutExtension(path);
+
+                SongInstrumentSetCore.ExportAll(
+                    CoreState.ROM, vocaBase, baseName,
+                    // writeFile / writeLines resolve the relative Core token against
+                    // the chosen index directory so all side + nested files land
+                    // next to the .instrument index (never the process CWD, never an
+                    // absolute path inside the TSV).
+                    (name, bytes) => File.WriteAllBytes(Path.Combine(dir, name), bytes),
+                    (name, lines) => File.WriteAllLines(Path.Combine(dir, name), lines));
+
+                CoreState.Services.ShowInfo(R._("Instrument set exported to {0}", path));
+            }
+            catch (Exception ex)
+            {
+                Log.Error("SongInstrumentView.InstExport_Click failed: {0}", ex.Message);
+                CoreState.Services.ShowError(R._("Instrument set export failed: {0}", ex.Message));
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // InstImport (#1057 PR2) — recursive ROM-MUTATING voicegroup import. The
+        // inverse of InstExport: open a TSV index file, resolve its directory, then
+        // read its side + nested files relative to that directory and append the
+        // whole imported set to free space (single transaction, validate-before-
+        // mutate, byte-identical fault restore — all in the Core seam
+        // SongInstrumentSetCore.ImportAll), repointing the loaded voicegroup's song
+        // reference(s) to the new base. Mirrors the N00/InstExport handlers'
+        // try/catch + pre-Begin file-dialog-exception structure.
+        // -----------------------------------------------------------------
+        async void InstImport_Click(object? sender, RoutedEventArgs e)
+        {
+            if (!_vm.IsLoaded) return;
+            if (CoreState.ROM == null) return;
+
+            // The voicegroup base the editor is currently editing.
+            uint vocaBase = _vm.BaseAddr;
+            if (vocaBase == 0)
+            {
+                CoreState.Services.ShowError(
+                    R._("No instrument set (voicegroup) is loaded to import into."));
+                return;
+            }
+
+            try
+            {
+                string? path = await FileDialogHelper.OpenFile(
+                    this, R._("Import Instrument"), "*.instrument");
+                if (string.IsNullOrEmpty(path)) return;
+
+                string dir = Path.GetDirectoryName(path) ?? ".";
+                string indexName = Path.GetFileName(path);
+
+                // The Core emits/consumes RELATIVE filename tokens; resolve each
+                // against the chosen index directory (never the process CWD, never
+                // an absolute path inside the TSV). ResolveInside REJECTS an absolute
+                // path or a ".."-escaping token (Copilot review — path traversal): a
+                // rejected/missing token returns null so the Core reports it cleanly
+                // during the validate phase (NO read outside the chosen directory).
+                Func<string, string[]> readLines = name =>
+                {
+                    string? p = ResolveInside(dir, name);
+                    return p != null && File.Exists(p) ? File.ReadAllLines(p) : null;
+                };
+                Func<string, byte[]> readFile = name =>
+                {
+                    string? p = ResolveInside(dir, name);
+                    return p != null && File.Exists(p) ? File.ReadAllBytes(p) : null;
+                };
+
+                _undoService.Begin("Import Instrument Set");
+                try
+                {
+                    if (!_vm.ImportLoadedVoicegroup(indexName, readLines, readFile,
+                            out uint newBase, out string err))
+                    {
+                        _undoService.Rollback();
+                        CoreState.Services.ShowError(
+                            err ?? R._("Instrument set import failed."));
+                        return;
+                    }
+
+                    _undoService.Commit();
+                    _vm.MarkClean();
+
+                    // Re-list from the new base so all imported rows show. The
+                    // read-config bar's First Address still holds the OLD base, and
+                    // LoadList prefers that explicit value, so sync it first.
+                    if (TopBar != null)
+                        TopBar.ReadStartAddress = newBase;
+                    LoadList();
+                    UpdateExpandButtonState();
+
+                    CoreState.Services.ShowInfo(R._(
+                        "Instrument set imported at 0x{0:X08}.", newBase));
+                }
+                catch (Exception ex)
+                {
+                    _undoService.Rollback();
+                    Log.Error("SongInstrumentView.InstImport_Click failed: {0}", ex.Message);
+                    CoreState.Services.ShowError(R._("Instrument set import failed: {0}", ex.Message));
+                }
+            }
+            catch (Exception ex)
+            {
+                // Pre-Begin scope: the file dialog can throw BEFORE _undoService.Begin,
+                // so no undo scope is open here and no Rollback is needed.
+                Log.Error("SongInstrumentView.InstImport_Click: {0}", ex.Message);
+                CoreState.Services?.ShowError(R._("Instrument set import failed: {0}", ex.Message));
+            }
+        }
+
+        // Resolve a relative side/nested-index token against the chosen import
+        // directory, REJECTING (returns null) an absolute path or a ".."-escaping
+        // token so a hand-edited / malicious TSV can never read a file outside the
+        // selected directory (Copilot review — path traversal). The Core only ever
+        // emits bare relative filenames, so a legitimate import is unaffected.
+        // internal for the path-traversal unit test (InternalsVisibleTo).
+        internal static string? ResolveInside(string dir, string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            // Reject an absolute / rooted token outright (e.g. "C:\x", "/x", "\\server\x").
+            if (Path.IsPathRooted(name)) return null;
+
+            string baseFull = Path.GetFullPath(dir);
+            string candidate = Path.GetFullPath(Path.Combine(baseFull, name));
+            // The resolved path must stay inside the chosen directory (block "..").
+            // Use case-INSENSITIVE comparison only on Windows (a case-insensitive
+            // filesystem); on Linux/macOS use Ordinal so a case-difference can't be
+            // exploited to slip a ".." escape past the prefix check (Copilot review).
+            var cmp = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            string prefix = baseFull.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+                ? baseFull
+                : baseFull + Path.DirectorySeparatorChar;
+            if (!candidate.StartsWith(prefix, cmp)
+                && !string.Equals(candidate, baseFull, cmp))
+                return null;
+            return candidate;
         }
 
         static string GetActiveTabPrefix(byte headerByte)

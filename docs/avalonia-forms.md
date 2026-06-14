@@ -191,7 +191,7 @@ Editors for event scripts, conditions, units, templates, and related data.
 | 90 | EventScriptPopupView | EventScriptPopupViewModel | Event script popup editor |
 | 91 | EventCondView | EventCondViewModel | Event condition editor |
 | 92 | EventCondMainView | EventCondMainViewModel | Nested sub-view for conditions |
-| 93 | EventUnitView | EventUnitViewModel | Event unit placement editor |
+| 93 | EventUnitView | EventUnitViewModel | Event unit placement editor — FE8 editable after-coord (move-path) list (#1017): row 0 is the synthetic START pos (X/Y/Ext persist to W4, synthetic fields disabled), rows 1+ are the 8-byte blob records (X/Y/Ext/Speed/UnitId/Unk1/Unk2/Wait); Add/Remove + in-place-vs-append+repoint write via Core `EventUnitCoordCore`; FE8-gated |
 | 94 | EventUnitFE6View | EventUnitFE6ViewModel | Event unit placement (FE6) |
 | 95 | EventUnitFE7View | EventUnitFE7ViewModel | Event unit placement (FE7) |
 | 96 | EventUnitSimView | EventUnitSimViewModel | Simplified event unit editor |
@@ -229,7 +229,7 @@ Editors for enemy AI behavior scripts.
 
 | # | View | ViewModel | Description |
 |---|------|-----------|-------------|
-| 124 | AIScriptView | AIScriptViewModel | Main AI script editor |
+| 124 | AIScriptView | AIScriptViewModel | Main AI script editor (opcode edit + write-back + full byte-stream Export/Import, #965) |
 | 125 | AIScriptCategorySelectView | AIScriptCategorySelectViewModel | AI script category picker |
 | 126 | AIASMCALLTALKView | AIASMCALLTALKViewModel | AI ASM call/talk script |
 | 127 | AIASMCoordinateView | AIASMCoordinateViewModel | AI ASM coordinate script |
@@ -272,29 +272,29 @@ Editors for portraits, sprites, battle animations, tilesets, and other graphics.
 | 150 | ImageCGView | ImageCGViewModel | CG (cutscene graphic) editor |
 | 151 | ImageCGFE7UView | ImageCGFE7UViewModel | CG editor (FE7U variant) |
 | 152 | ImageChapterTitleFE7View | ImageChapterTitleFE7ViewModel | Chapter title image (FE7) |
-| 153 | ImageUnitPaletteView | ImageUnitPaletteViewModel | Unit sprite palette editor |
+| 153 | ImageUnitPaletteView | ImageUnitPaletteViewModel | Unit sprite palette editor (live-recolors the sample battle-anime preview while editing R/G/B colors, #1022; Clipboard/Zoom/Undo/Redo controls wired, #1006 — Expand List + New Palette Allocation deferred to a follow-up) |
 | 154 | ImageUnitWaitIconView | ImageUnitWaitIconViewModel | Unit wait/idle icon editor |
 | 155 | ImageUnitMoveIconView | ImageUnitMoveIconViewModel | Unit move icon editor |
 | 156 | ImageSystemAreaView | ImageSystemAreaViewModel | System area graphics editor |
-| 157 | ImageGenericEnemyPortraitView | ImageGenericEnemyPortraitViewModel | Generic enemy portrait editor |
+| 157 | ImageGenericEnemyPortraitView | ImageGenericEnemyPortraitViewModel | Generic enemy portrait editor (preview + PNG Export / Image Import) |
 | 158 | ImageRomAnimeView | ImageRomAnimeViewModel | ROM-stored animation editor |
-| 159 | ImageTSAEditorView | ImageTSAEditorViewModel | Tile Screen Arrangement editor |
+| 159 | ImageTSAEditorView | ImageTSAEditorViewModel | Tile Screen Arrangement editor (palette write + raw-tilesheet import/export + per-cell TSA editing & TSA write-back for NON-header TSA, #1005; header-TSA per-cell editing deferred) |
 | 160 | ImageTSAAnimeView | ImageTSAAnimeViewModel | TSA animation editor |
 | 161 | ImageTSAAnime2View | ImageTSAAnime2ViewModel | TSA animation editor (type 2) |
 | 162 | ImagePalletView | ImagePalletViewModel | Palette viewer/editor |
 | 163 | ImageMagicFEditorView | ImageMagicFEditorViewModel | Magic effect frame editor |
-| 164 | ImageMagicCSACreatorView | ImageMagicCSACreatorViewModel | Magic CSA (compressed sprite) creator |
+| 164 | ImageMagicCSACreatorView | ImageMagicCSACreatorViewModel | Magic CSA (compressed sprite) creator — live 240×128 frame preview (`MagicEffectExportCore.RenderCsaFramePreview`, READ-ONLY; BG→OBJ-back→OBJ-front composite, honors `IsExpandsBG`) on entry-select / Frame spinner / Zoom; working "Find new resources online" → MoreData wiki link (#1021) |
 | 165 | ImageMapActionAnimationView | ImageMapActionAnimationViewModel | Map action animation editor |
 | 166 | ImageFormRefViewerView | ImageFormRefViewerViewModel | Image form reference viewer |
 | 167 | InterpolatedPictureBoxViewerView | InterpolatedPictureBoxViewerViewModel | Interpolated image viewer |
-| 168 | DecreaseColorTSAToolView | DecreaseColorTSAToolViewModel | Color reduction with TSA tool |
+| 168 | DecreaseColorTSAToolView | DecreaseColorTSAToolViewModel | Color reduction with TSA tool (functional file→file reducer: Method presets + Reduce, #998) |
 | 169 | SystemIconViewerView | SystemIconViewerViewModel | System icon viewer |
 | 170 | SystemHoverColorViewerView | SystemHoverColorViewerViewModel | System hover color table viewer |
 | 171 | BattleBGViewerView | BattleBGViewerViewModel | Battle background viewer |
 | 172 | BattleTerrainViewerView | BattleTerrainViewerViewModel | Battle terrain viewer |
 | 173 | ChapterTitleViewerView | ChapterTitleViewerViewModel | Chapter title image viewer |
 | 174 | BigCGViewerView | BigCGViewerViewModel | Large CG image viewer |
-| 175 | GraphicsToolView | GraphicsToolViewViewModel | Graphics tool main view |
+| 175 | GraphicsToolView | GraphicsToolViewViewModel | Graphics tool main view (TSA-composited preview via ImageTSAEditorCore.TryRenderMainImage, #1030; image2-join + LZ77-compressed paletteType wired in via the 10-arg overload, #1074) |
 | 176 | GraphicsToolPatchMakerView | GraphicsToolPatchMakerViewViewModel | Graphics patch creation tool |
 | 177 | MantAnimationView | MantAnimationViewModel | Map/mant animation viewer |
 | 178 | OAMSPView | OAMSPViewModel | OAM sprite editor |
@@ -421,7 +421,7 @@ Editors for world map nodes, paths, events, and images.
 | 243 | WorldMapPathView | WorldMapPathViewModel | World map path editor |
 | 244 | WorldMapPathEditorView | WorldMapPathEditorViewModel | World map path visual editor |
 | 245 | WorldMapPathMoveEditorView | WorldMapPathMoveEditorViewModel | World map path movement editor |
-| 246 | WorldMapImageView | WorldMapImageViewModel | World map image editor |
+| 246 | WorldMapImageView | WorldMapImageViewModel | World map image editor — Main/Dark import (#875), Mini/Point1/Point2/Road strip image imports wired via `ImageWorldMapCore.ImportIconStrip` (single-LZ77-stream, image-only nearest-color remap, FE8-only gates, #1000); Event/Border image imports + legacy full Export are deferred follow-ups |
 | 247 | WorldMapImageFE6View | WorldMapImageFE6ViewModel | World map image (FE6) |
 | 248 | WorldMapImageFE7View | WorldMapImageFE7ViewModel | World map image (FE7) |
 
@@ -435,7 +435,7 @@ Editors for opening demos, fonts, prologues, and alpha names.
 | 250 | OPClassDemoFE7View | OPClassDemoFE7ViewModel | Class demo (FE7 variant) |
 | 251 | OPClassDemoFE7UView | OPClassDemoFE7UViewModel | Class demo (FE7U variant) |
 | 252 | OPClassDemoFE8UView | OPClassDemoFE8UViewModel | Class demo (FE8U variant) |
-| 253 | OPClassFontViewerView | OPClassFontViewerViewModel | Opening class font viewer |
+| 253 | OPClassFontViewerView | OPClassFontViewerViewModel | Opening class font editor (Write + Export PNG + Import PNG, #999) |
 | 254 | OPClassFontFE8UView | OPClassFontFE8UViewModel | Class font (FE8U variant) |
 | 255 | OPClassAlphaNameView | OPClassAlphaNameViewModel | Opening alpha name editor |
 | 256 | OPClassAlphaNameFE6View | OPClassAlphaNameFE6ViewModel | Alpha name (FE6 variant) |
@@ -464,14 +464,14 @@ Editors for various skill system implementations.
 |---|------|-----------|-------------|
 | 266 | SkillAssignmentUnitSkillSystemView | SkillAssignmentUnitSkillSystemViewModel | Unit skill assignment (SkillSystem) |
 | 267 | SkillAssignmentClassSkillSystemView | SkillAssignmentClassSkillSystemViewModel | Class skill assignment (SkillSystem) |
-| 268 | SkillConfigSkillSystemView | SkillConfigSkillSystemViewModel | Skill config (SkillSystem) |
+| 268 | SkillConfigSkillSystemView | SkillConfigSkillSystemViewModel | Skill config (SkillSystem) — renders the per-frame animation preview via Core `SkillSystemsAnimeExportCore` (#1010) |
 | 269 | SkillAssignmentUnitCSkillSysView | SkillAssignmentUnitCSkillSysViewModel | Unit skill assignment (CSkillSys) |
 | 270 | SkillAssignmentClassCSkillSysView | SkillAssignmentClassCSkillSysViewModel | Class skill assignment (CSkillSys) |
 | 271 | SkillAssignmentUnitFE8NView | SkillAssignmentUnitFE8NViewModel | Unit skill assignment (FE8N) |
 | 272 | SkillConfigFE8NSkillView | SkillConfigFE8NSkillViewModel | Skill config (FE8N) |
-| 273 | SkillConfigFE8NVer2SkillView | SkillConfigFE8NVer2SkillViewModel | Skill config (FE8N v2) |
-| 274 | SkillConfigFE8NVer3SkillView | SkillConfigFE8NVer3SkillViewModel | Skill config (FE8N v3) |
-| 275 | SkillConfigFE8UCSkillSys09xView | SkillConfigFE8UCSkillSys09xViewModel | Skill config (FE8U CSkillSys 0.9.x) |
+| 273 | SkillConfigFE8NVer2SkillView | SkillConfigFE8NVer2SkillViewModel | Skill config (FE8N v2) — renders the per-frame animation preview via Core `SkillSystemsAnimeExportCore` (#1010) |
+| 274 | SkillConfigFE8NVer3SkillView | SkillConfigFE8NVer3SkillViewModel | Skill config (FE8N v3) — renders the per-frame animation preview via Core `SkillSystemsAnimeExportCore` (#1010) |
+| 275 | SkillConfigFE8UCSkillSys09xView | SkillConfigFE8UCSkillSys09xViewModel | Skill config (FE8U CSkillSys 0.9.x) — renders the per-frame animation preview via Core `SkillSystemsAnimeExportCore` (#1010) |
 | 276 | SkillSystemsEffectivenessReworkClassTypeView | SkillSystemsEffectivenessReworkClassTypeViewModel | Effectiveness rework class type |
 | 277 | SkillSystemsCSkillRechainView | SkillSystemsCSkillRechainViewModel | CSkill rechain editor |
 
@@ -512,7 +512,7 @@ Pointer manipulation and emulator memory access tools.
 
 | # | View | ViewModel | Description |
 |---|------|-----------|-------------|
-| 295 | PointerToolView | PointerToolViewModel | Pointer manipulation tool |
+| 295 | PointerToolView | PointerToolViewModel | Pointer manipulation tool (cross-ROM raw + LDR literal-pool reference search via `U.GrepPointerAll` / `U.GrepPointerAllOnLDR`, #966) |
 | 296 | PointerToolBatchInputView | PointerToolBatchInputViewModel | Batch pointer input |
 | 297 | PointerToolCopyToView | PointerToolCopyToViewModel | Copy pointer data tool |
 | 298 | MoveToFreeSpaceView | MoveToFreeSpaceViewViewModel | Move data to free space tool |
@@ -538,7 +538,7 @@ Editors for miscellaneous ROM structure data.
 | # | View | ViewModel | Description |
 |---|------|-----------|-------------|
 | 306 | Command85PointerView | Command85PointerViewModel | Command 0x85 pointer table editor |
-| 307 | DumpStructSelectDialogView | DumpStructSelectDialogViewModel | Struct dump selection dialog |
+| 307 | DumpStructSelectDialogView | DumpStructSelectDialogViewModel | Struct dump selection dialog (CSV/TSV/EA/STRUCT/NMM all export struct-aware output for resolved tables via `StructExportCore`; STRUCT=.h C-header, NMM=No$gba memory map — #1012) |
 | 308 | DumpStructSelectToTextDialogView | DumpStructSelectToTextDialogViewModel | Struct dump to text dialog |
 | 309 | ResourceView | ResourceViewModel | Resource table viewer |
 

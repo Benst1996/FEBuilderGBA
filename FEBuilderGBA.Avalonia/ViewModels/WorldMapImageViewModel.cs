@@ -105,6 +105,50 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         bool _isLoaded;
         public bool IsLoaded { get => _isLoaded; set => SetField(ref _isLoaded, value); }
 
+        // ---- #1013: Source-file affordance (mirrors ImageBGViewModel). WF
+        // WorldMapImageForm records the imported source-image path under the
+        // FIXED ResourceCache key "WorldMap_" (NOT per-index). Open Source
+        // File / Folder become available only when the recorded file exists. ----
+        const string SourceFileResourceKey = "WorldMap_";   // matches WF WorldMapImageForm
+        string _sourceFilePath = string.Empty;
+        bool _isSourceFileAvailable;
+        public string SourceFilePath { get => _sourceFilePath; set => SetField(ref _sourceFilePath, value); }
+        public bool IsSourceFileAvailable { get => _isSourceFileAvailable; set => SetField(ref _isSourceFileAvailable, value); }
+
+        /// <summary>Re-read the recorded World Map source-image path from ResourceCache (WF "WorldMap_" key).</summary>
+        public void RefreshSourceFile()
+        {
+            var cache = CoreState.ResourceCache as FEBuilderGBA.EtcCacheResource;
+            if (cache == null) { IsSourceFileAvailable = false; SourceFilePath = string.Empty; return; }
+            string path = cache.At(SourceFileResourceKey, string.Empty);
+            SourceFilePath = path ?? string.Empty;
+            IsSourceFileAvailable = !string.IsNullOrEmpty(SourceFilePath) && System.IO.File.Exists(SourceFilePath);
+        }
+
+        /// <summary>Record a new World Map source-image path after a successful MAIN import (WF ImportButton_Click).</summary>
+        public void RecordSourceFile(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            var cache = CoreState.ResourceCache as FEBuilderGBA.EtcCacheResource;
+            if (cache == null) return;
+            cache.Update(SourceFileResourceKey, path);
+            SourceFilePath = path;
+            IsSourceFileAvailable = System.IO.File.Exists(path);
+        }
+
+        // ---- Reuse-based preview export gates (#843 NV5a) + main field map
+        // (#846 NV5b) + county border (#849 NV5c). Each is set true only after a
+        // successful render so the per-preview "Export PNG" button stays disabled
+        // when the preview could not be decoded. ----
+        bool _canExportMain, _canExportEvent, _canExportMini, _canExportPoint1, _canExportPoint2, _canExportRoad, _canExportBorder;
+        public bool CanExportMain { get => _canExportMain; set => SetField(ref _canExportMain, value); }
+        public bool CanExportEvent { get => _canExportEvent; set => SetField(ref _canExportEvent, value); }
+        public bool CanExportMini { get => _canExportMini; set => SetField(ref _canExportMini, value); }
+        public bool CanExportPoint1 { get => _canExportPoint1; set => SetField(ref _canExportPoint1, value); }
+        public bool CanExportPoint2 { get => _canExportPoint2; set => SetField(ref _canExportPoint2, value); }
+        public bool CanExportRoad { get => _canExportRoad; set => SetField(ref _canExportRoad, value); }
+        public bool CanExportBorder { get => _canExportBorder; set => SetField(ref _canExportBorder, value); }
+
         // ===================================================================
         // Canonical pointer slots (load + write all 13 in one undo scope).
         // ===================================================================
@@ -132,6 +176,10 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             Point2ImagePtr = rom.u32(rom.RomInfo.worldmap_icon2_pointer);
             RoadImagePtr = rom.u32(rom.RomInfo.worldmap_road_tile_pointer);
             IconPalettePtr = rom.u32(rom.RomInfo.worldmap_icon_palette_pointer);
+            // #1013: re-populate the source-file affordance from ResourceCache
+            // (WF "WorldMap_" key) so Open Source File / Folder light up if a
+            // path was recorded by a previous import.
+            RefreshSourceFile();
             IsLoaded = true;
         }
 
@@ -337,5 +385,525 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             rom.write_u16(IconCurrentAddr + 14, IconW14);
             return true;
         }
+
+        // ===================================================================
+        // List expansion (#825) — delegates to DataExpansionCore.ExpandTableTo
+        // + RepointAllReferences. Mirrors ImageMapActionAnimationViewModel.
+        // ExpandList (#501) but composes the all-reference repoint that WF's
+        // InputFormRef.ExpandsArea performs via MoveToFreeSapceForm.SearchPointer
+        // (raw 32-bit pointers + ARM-Thumb LDR literal-pool loads). Both world-
+        // map tables are fixed-RomInfo-pointer tables (Border = 12B at
+        // worldmap_county_border_pointer; IconData = 16B at
+        // worldmap_icon_data_pointer).
+        //
+        // Caller wraps each call in an UndoService.Begin/Commit/Rollback scope
+        // (ROM.BeginUndoScope), so every ExpandTableTo + RepointAllReferences
+        // write lands in ONE undo transaction.
+        // ===================================================================
+
+        /// <summary>
+        /// Grow the border table (<c>worldmap_county_border_pointer</c>, 12-byte
+        /// records) to <paramref name="newCount"/> rows.
+        ///
+        /// <para>Composition: capture <c>oldBase = rom.p32(ptr)</c> →
+        /// <see cref="DataExpansionCore.ExpandTableTo"/> (moves + copies +
+        /// writes the <c>0xFFFFFFFF</c> terminator + wipes the old region +
+        /// single-slot-repoints the canonical pointer) → read <c>newBase</c>
+        /// from the result → <see cref="DataExpansionCore.RepointAllReferences"/>
+        /// to repoint EVERY other raw-pointer / LDR reference to the old base.</para>
+        ///
+        /// <para><b>NOTE A:</b> a <see cref="DataExpansionCore.RepointAllReferences"/>
+        /// return of <c>0</c> is SUCCESS here — <c>ExpandTableTo</c> already
+        /// repointed the canonical pointer, so a clean ROM with no secondary
+        /// references legitimately has zero further slots to rewrite. (Unlike
+        /// <c>SongInstrumentViewModel.ExpandVoicegroupTo128</c>, whose append-
+        /// based path relies on <c>RepointAllReferences</c> for its ONLY
+        /// repoint and therefore treats <c>0</c> as an orphan.)</para>
+        ///
+        /// <para><b>NOTE B:</b> sets <see cref="BorderReadCount"/> /
+        /// <see cref="BorderReadStartAddress"/> directly from the
+        /// <see cref="DataExpansionCore.ExpandResult"/>. The new rows are
+        /// zero-filled and <c>U.isPointer(0) == false</c>, so re-deriving the
+        /// count by re-scanning (<see cref="LoadBorderList"/> stops at
+        /// <c>!U.isPointer(...)</c>) would report the OLD count. Callers refresh
+        /// the displayed list via <see cref="BuildBorderListForCount"/>, NOT by
+        /// re-scanning.</para>
+        ///
+        /// <para><b>Inherited KnownGap:</b> the comment/lint cache repoint that
+        /// <c>ExpandTableTo</c> performs is forward-only — ROM undo restores
+        /// bytes but does NOT reverse the cache repoint (accepted WF parity, see
+        /// <c>DataExpansionCore.ExpandTableTo</c> XML doc).</para>
+        /// </summary>
+        /// <param name="newCount">Target row count (must be &gt;= current
+        /// <see cref="BorderReadCount"/>).</param>
+        /// <param name="undo">The active undo buffer (from the caller's
+        /// <c>UndoService.GetActiveUndoData()</c>) so the all-reference repoint
+        /// records into the same transaction.</param>
+        /// <returns>Empty on success, error string otherwise.</returns>
+        public string ExpandBorderList(uint newCount, Undo.UndoData undo)
+            => ExpandTableHelper(
+                CoreState.ROM?.RomInfo?.worldmap_county_border_pointer ?? 0,
+                BorderRecordStride,
+                (uint)BorderReadCount,
+                newCount,
+                undo,
+                onSuccess: (newBase, count) =>
+                {
+                    BorderReadStartAddress = U.toPointer(newBase);
+                    BorderReadCount = (int)count;
+                });
+
+        /// <summary>
+        /// Grow the icon-data table (<c>worldmap_icon_data_pointer</c>, 16-byte
+        /// records) to <paramref name="newCount"/> rows. Same composition,
+        /// NOTE A / NOTE B handling, and inherited cache KnownGap as
+        /// <see cref="ExpandBorderList"/>.
+        /// </summary>
+        /// <param name="newCount">Target row count (must be &gt;= current
+        /// <see cref="IconReadCount"/>).</param>
+        /// <param name="undo">The active undo buffer (same transaction).</param>
+        /// <returns>Empty on success, error string otherwise.</returns>
+        public string ExpandIconList(uint newCount, Undo.UndoData undo)
+            => ExpandTableHelper(
+                CoreState.ROM?.RomInfo?.worldmap_icon_data_pointer ?? 0,
+                IconRecordStride,
+                (uint)IconReadCount,
+                newCount,
+                undo,
+                onSuccess: (newBase, count) =>
+                {
+                    IconReadStartAddress = U.toPointer(newBase);
+                    IconReadCount = (int)count;
+                });
+
+        /// <summary>
+        /// Shared expand body for both world-map tables. Validates the pointer
+        /// + count, runs <c>ExpandTableTo</c> then <c>RepointAllReferences</c>
+        /// (NOTE A: 0 is success), and invokes <paramref name="onSuccess"/> with
+        /// the new base offset + new count (NOTE B: caller sets the read count
+        /// from the result, not by re-scanning).
+        /// </summary>
+        string ExpandTableHelper(uint ptr, int entrySize, uint currentCount,
+            uint newCount, Undo.UndoData undo,
+            Action<uint, uint> onSuccess)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom?.RomInfo == null) return R._("ROM not loaded.");
+            if (ptr == 0) return R._("World map table pointer not found in this ROM.");
+            if (newCount < currentCount)
+                return R._("New count ({0}) must be greater than or equal to current count ({1}).",
+                    newCount, currentCount);
+            if (newCount == currentCount) return ""; // no-op success
+
+            // Capture the OLD base BEFORE ExpandTableTo moves the table.
+            uint oldBase = rom.p32(ptr);
+
+            var result = DataExpansionCore.ExpandTableTo(rom, ptr, (uint)entrySize, currentCount, newCount);
+            if (!result.Success)
+                return result.Error ?? R._("Table expansion failed.");
+
+            uint newBase = result.NewBaseAddress;
+
+            // Repoint EVERY other raw-pointer / LDR reference to the old base.
+            // NOTE A: ExpandTableTo already repointed the canonical pointer, so
+            // RepointAllReferences returning 0 (clean ROM, no secondary refs) is
+            // SUCCESS — do NOT roll back on 0. The canonical slot now holds the
+            // new base and is therefore NOT re-matched (no double-write).
+            DataExpansionCore.RepointAllReferences(rom, oldBase, newBase, undo);
+
+            // NOTE B: set the read count from the result, NOT by re-scanning
+            // (the appended rows are zero-filled, and U.isPointer(0) == false,
+            // so a re-scan would stop at the first new row and report the OLD
+            // count).
+            onSuccess(newBase, result.NewCount);
+            return "";
+        }
+
+        /// <summary>
+        /// Build the border AddressList for exactly <paramref name="count"/>
+        /// rows starting at <paramref name="baseAddr"/> (an offset). Used after
+        /// an expand to render the grown list WITHOUT re-scanning past the
+        /// zero-filled new rows (NOTE B). Mirrors the row shape produced by
+        /// <see cref="LoadBorderList"/> (one <see cref="AddrResult"/> per row,
+        /// labelled with the hex row index).
+        /// </summary>
+        public List<AddrResult> BuildBorderListForCount(uint baseAddr, int count)
+            => BuildListForCount(baseAddr, count, BorderRecordStride);
+
+        /// <summary>
+        /// Build the icon-data AddressList for exactly <paramref name="count"/>
+        /// rows starting at <paramref name="baseAddr"/>. IconData counterpart of
+        /// <see cref="BuildBorderListForCount"/>.
+        /// </summary>
+        public List<AddrResult> BuildIconListForCount(uint baseAddr, int count)
+            => BuildListForCount(baseAddr, count, IconRecordStride);
+
+        static List<AddrResult> BuildListForCount(uint baseAddr, int count, int stride)
+        {
+            var result = new List<AddrResult>();
+            ROM rom = CoreState.ROM;
+            if (rom?.Data == null || count <= 0) return result;
+            uint addr = baseAddr;
+            for (int i = 0; i < count && i < LoadListHardCap; i++, addr += (uint)stride)
+            {
+                if (addr + stride > (uint)rom.Data.Length) break;
+                result.Add(new AddrResult(addr, U.ToHexString(i), 0));
+            }
+            return result;
+        }
+
+        // ===================================================================
+        // Live previews. Each delegates to the matching ImageWorldMapCore
+        // resolver+decode (pointer-to-pointer dereference + LZ77 guard + Core
+        // primitive). All null-safe — a bad/truncated/missing pointer (or, for
+        // the main field map, a non-FE8 ROM) returns null and the view clears
+        // the preview surface. Read-only: no ROM write. The county border (NV5c)
+        // is deliberately NOT here — a separate follow-up (OAM blit).
+        //   * Main field map: #846 NV5b — the NEW pure primitive
+        //     ByteToImage16TilePaletteMap (FE8-only, LZ77 palette-map only).
+        //   * Event / mini / point1 / point2 / road: #843 NV5a (reuse-based).
+        // ===================================================================
+
+        /// <summary>Render the FE8 MAIN FIELD MAP preview (480×320 px) via
+        /// <see cref="ImageWorldMapCore.TryRenderMainFieldMap"/>. FE8-only
+        /// (FE6/FE7 -&gt; null), LZ77-decompresses ONLY the palette-map (image +
+        /// palette RAW), requires the full fixed regions. Null on any failure or
+        /// a non-FE8 ROM.</summary>
+        public IImage TryRenderMainFieldMap() => ImageWorldMapCore.TryRenderMainFieldMap(CoreState.ROM);
+
+        /// <summary>Render the EVENT preview (32x20 tiles = 256x160 px) via
+        /// <see cref="ImageWorldMapCore.TryRenderEvent"/>. Decompresses BOTH the
+        /// LZ77 image AND the LZ77 header-TSA and reads the 64-color
+        /// (4-sub-palette) event palette. Null on any failure.</summary>
+        public IImage TryRenderEvent() => ImageWorldMapCore.TryRenderEvent(CoreState.ROM);
+
+        /// <summary>Render the MINI MAP preview (8x8 tiles = 64x64 px) via
+        /// <see cref="ImageWorldMapCore.TryRenderMini"/>. Null on any failure.</summary>
+        public IImage TryRenderMini() => ImageWorldMapCore.TryRenderMini(CoreState.ROM);
+
+        /// <summary>Render the POINT 1 preview (32x8 tiles = 256x64 px) via
+        /// <see cref="ImageWorldMapCore.TryRenderPoint1"/>. Null on any failure.</summary>
+        public IImage TryRenderPoint1() => ImageWorldMapCore.TryRenderPoint1(CoreState.ROM);
+
+        /// <summary>Render the POINT 2 preview (12x4 tiles = 96x32 px) via
+        /// <see cref="ImageWorldMapCore.TryRenderPoint2"/>. Null on any failure.</summary>
+        public IImage TryRenderPoint2() => ImageWorldMapCore.TryRenderPoint2(CoreState.ROM);
+
+        /// <summary>Render the ROAD preview (1x15 tiles = 8x120 px) via
+        /// <see cref="ImageWorldMapCore.TryRenderRoad"/>. Null on any failure.</summary>
+        public IImage TryRenderRoad() => ImageWorldMapCore.TryRenderRoad(CoreState.ROM);
+
+        /// <summary>
+        /// Render the COUNTY BORDER (国境) AP preview (256×160 px) via
+        /// <see cref="ImageWorldMapCore.TryRenderBorder"/>. FE8-only (FE6/FE7
+        /// have no county border — returns null). Uses the live VM field values
+        /// (<see cref="BorderP0"/> = image pointer, <see cref="BorderP4"/> = AP
+        /// pointer, <see cref="BorderW8"/> = x, <see cref="BorderW10"/> = y).
+        /// Null on any failure.
+        /// </summary>
+        public IImage TryRenderBorder()
+            => ImageWorldMapCore.TryRenderBorder(
+                CoreState.ROM,
+                BorderP0,
+                BorderP4,
+                (int)BorderW8,
+                (int)BorderW10);
+
+        /// <summary>
+        /// True when the county border can be exported — gates the Border Export
+        /// PNG button. Delegates to
+        /// <see cref="ImageWorldMapCore.CanExportBorder"/> (render is non-null).
+        /// </summary>
+        public bool CanExportBorderNow()
+            => ImageWorldMapCore.CanExportBorder(
+                CoreState.ROM,
+                BorderP0,
+                BorderP4,
+                (int)BorderW8,
+                (int)BorderW10);
+
+        // ===================================================================
+        // Main Import / Dark Import / Dark Export (#875)
+        // ===================================================================
+
+        // ---- import gates ----
+
+        bool _canImportMain;
+        bool _canImportDark;
+
+        /// <summary>True when the FE8 main field map Import button should be enabled.
+        /// Set false once an import is in progress (prevents re-entry).</summary>
+        public bool CanImportMain { get => _canImportMain; set => SetField(ref _canImportMain, value); }
+
+        /// <summary>True when the FE8 dark palette Import button should be enabled.</summary>
+        public bool CanImportDark { get => _canImportDark; set => SetField(ref _canImportDark, value); }
+
+        // ---- #1000: strip import gates (Mini / Point1 / Point2 / Road) ----
+        bool _canImportMini, _canImportPoint1, _canImportPoint2, _canImportRoad;
+
+        /// <summary>True when the Mini strip Import button should be enabled
+        /// (FE8 + nonzero, resolvable image AND palette pointer slots).</summary>
+        public bool CanImportMini { get => _canImportMini; set => SetField(ref _canImportMini, value); }
+
+        /// <summary>True when the Point1 strip Import button should be enabled.</summary>
+        public bool CanImportPoint1 { get => _canImportPoint1; set => SetField(ref _canImportPoint1, value); }
+
+        /// <summary>True when the Point2 strip Import button should be enabled.</summary>
+        public bool CanImportPoint2 { get => _canImportPoint2; set => SetField(ref _canImportPoint2, value); }
+
+        /// <summary>True when the Road strip Import button should be enabled.</summary>
+        public bool CanImportRoad { get => _canImportRoad; set => SetField(ref _canImportRoad, value); }
+
+        // ---- #1064 PR1: event two-stream import gate ----
+        bool _canImportEvent;
+
+        /// <summary>True when the Event image Import button should be enabled
+        /// (FE8 + all three nonzero, resolvable event pointer slots —
+        /// image / TSA / palette).</summary>
+        public bool CanImportEvent { get => _canImportEvent; set => SetField(ref _canImportEvent, value); }
+
+        // ---- #1064 PR2: county-border OAM/AP import gate ----
+        bool _canImportBorder;
+
+        /// <summary>True when the Border image Import button should be enabled
+        /// (FE8 + a county-border palette pointer + a selected 12-byte border
+        /// record). The Core <see cref="ImageWorldMapCore.ImportBorder"/> re-checks
+        /// these guards before any write.</summary>
+        public bool CanImportBorder { get => _canImportBorder; set => SetField(ref _canImportBorder, value); }
+
+        bool _canExportDark;
+        /// <summary>True after a successful TryRenderDarkFieldMap — gates the Dark Export button.</summary>
+        public bool CanExportDark { get => _canExportDark; set => SetField(ref _canExportDark, value); }
+
+        /// <summary>
+        /// Refresh the CanImportMain / CanImportDark gates and the four #1000
+        /// strip-import gates. Main/Dark are enabled only on a FE8 ROM (same gate
+        /// as TryRenderMainFieldMap). Each strip gate is FE8-only AND requires a
+        /// nonzero, resolvable image pointer slot AND a nonzero, resolvable
+        /// palette pointer slot (FE6/FE7 have these as 0, so they stay disabled).
+        /// Called from LoadAll / RefreshPreviews.
+        /// </summary>
+        public void RefreshImportGates()
+        {
+            ROM rom = CoreState.ROM;
+            bool isFE8 = rom?.RomInfo?.version == 8;
+            CanImportMain = isFE8;
+            CanImportDark = isFE8;
+
+            CanImportMini = isFE8 && CanImportStrip(rom,
+                rom?.RomInfo?.worldmap_mini_image_pointer ?? 0,
+                rom?.RomInfo?.worldmap_mini_palette_pointer ?? 0);
+            CanImportPoint1 = isFE8 && CanImportStrip(rom,
+                rom?.RomInfo?.worldmap_icon1_pointer ?? 0,
+                rom?.RomInfo?.worldmap_icon_palette_pointer ?? 0);
+            CanImportPoint2 = isFE8 && CanImportStrip(rom,
+                rom?.RomInfo?.worldmap_icon2_pointer ?? 0,
+                rom?.RomInfo?.worldmap_icon_palette_pointer ?? 0);
+            CanImportRoad = isFE8 && CanImportStrip(rom,
+                rom?.RomInfo?.worldmap_road_tile_pointer ?? 0,
+                rom?.RomInfo?.worldmap_icon_palette_pointer ?? 0);
+
+            // #1064 PR1: the event import needs all THREE event pointer slots
+            // (image / TSA / palette) to be nonzero + resolvable. FE6 has them as
+            // 0x0. The Core ImportEvent re-checks these guards before any write.
+            CanImportEvent = isFE8
+                && CanImportEventStreams(rom);
+
+            // #1064 PR2: the border OAM/AP import needs a FE8 ROM with a non-zero
+            // county-border palette pointer (FE6/FE7 have it as 0x0) AND a selected
+            // 12-byte border record (BorderCurrentAddr != 0, set by LoadBorderEntry).
+            // The Core ImportBorder re-checks these guards before any write.
+            CanImportBorder = isFE8
+                && (rom?.RomInfo?.worldmap_county_border_palette_pointer ?? 0) != 0
+                && BorderCurrentAddr != 0;
+        }
+
+        /// <summary>The event import is reachable when all three
+        /// <c>worldmap_event_*_pointer</c> slots are nonzero, in-range, and resolve
+        /// to in-ROM offsets. Mirrors <see cref="CanImportStrip"/> but for the
+        /// three-stream event layout (Core <see cref="ImageWorldMapCore.ImportEvent"/>
+        /// re-validates these before any write).</summary>
+        static bool CanImportEventStreams(ROM rom)
+        {
+            if (rom?.RomInfo == null || rom.Data == null) return false;
+            return SlotResolves(rom, rom.RomInfo.worldmap_event_image_pointer)
+                && SlotResolves(rom, rom.RomInfo.worldmap_event_tsa_pointer)
+                && SlotResolves(rom, rom.RomInfo.worldmap_event_palette_pointer);
+        }
+
+        /// <summary>A pointer slot resolves when it is nonzero, its +4 read is
+        /// in-range, and the encoded value is a safe ROM pointer.</summary>
+        static bool SlotResolves(ROM rom, uint slot)
+        {
+            if (slot == 0 || (ulong)slot + 4 > (ulong)rom.Data.Length) return false;
+            uint encoded = rom.u32(slot);
+            if (!U.isPointer(encoded)) return false;
+            return U.isSafetyOffset(U.toOffset(encoded), rom);
+        }
+
+        /// <summary>
+        /// A strip is importable when its image pointer slot is nonzero and its
+        /// palette pointer slot resolves to a readable 16-color palette (via the
+        /// guarded <see cref="ImageWorldMapCore.TryGetStripPalette"/>). The image
+        /// slot must also be a nonzero, in-range slot (the import seam re-checks
+        /// the +4 bounds, but the gate refuses an unset 0 slot up front).
+        /// </summary>
+        static bool CanImportStrip(ROM rom, uint imagePointerSlot, uint palettePointerSlot)
+        {
+            if (rom?.Data == null) return false;
+            if (imagePointerSlot == 0 || (ulong)imagePointerSlot + 4 > (ulong)rom.Data.Length) return false;
+            return ImageWorldMapCore.TryGetStripPalette(rom, palettePointerSlot, out _);
+        }
+
+        // ---- indexed-image load (platform-agnostic — reads EXISTING ROM indexed data) ----
+
+        /// <summary>
+        /// Convert raw RGBA pixel data + the existing 4-sub-palette GBA palette
+        /// to an indexed-pixel buffer (1 byte/pixel, values 0–63 where
+        /// <c>value / 16</c> is the sub-palette). Delegates to
+        /// <see cref="ImageImportCore.RemapToMultiPalette"/> then flattens
+        /// per-tile palette indices into absolute indices
+        /// (<c>localIndex + subPaletteIndex * 16</c>).
+        ///
+        /// <para>Used by the Avalonia import path to convert the PNG the user
+        /// opened (RGBA from SkiaSharp) into the indexed buffer
+        /// <see cref="ImportMainFieldMap"/> and
+        /// <see cref="ImageWorldMapCore.ValidateTileMonoPalette"/> expect.</para>
+        /// </summary>
+        public static (byte[] indexedPixels, string error) RgbaToIndexed(
+            byte[] rgbaPixels, int width, int height, byte[] gbaPalette128)
+        {
+            if (rgbaPixels == null || gbaPalette128 == null)
+                return (null, "Invalid input.");
+            if (rgbaPixels.Length < width * height * 4)
+                return (null, "RGBA pixel buffer too short.");
+
+            var remap = ImageImportCore.RemapToMultiPalette(
+                rgbaPixels, width, height, gbaPalette128, 4);
+            if (remap == null)
+                return (null, "Failed to remap to 4 sub-palettes.");
+
+            // Flatten: each pixel's absolute index = local index + subPalette * 16.
+            int tilesX = width / 8;
+            int tilesY = height / 8;
+            byte[] flat = new byte[width * height];
+            for (int ty = 0; ty < tilesY; ty++)
+            {
+                for (int tx = 0; tx < tilesX; tx++)
+                {
+                    int tileIdx = ty * tilesX + tx;
+                    int pal = remap.TilePaletteIndices[tileIdx];
+                    for (int py = 0; py < 8; py++)
+                    {
+                        for (int px = 0; px < 8; px++)
+                        {
+                            int i = (ty * 8 + py) * width + (tx * 8 + px);
+                            flat[i] = (byte)((remap.IndexedPixels[i] & 0x0F) + pal * 16);
+                        }
+                    }
+                }
+            }
+            return (flat, "");
+        }
+
+        /// <summary>
+        /// Read the existing GBA palette from the ROM's worldmap_big_palette_pointer
+        /// (128 bytes = 4 sub-palettes × 16 colors × 2 bytes). Returns null on any
+        /// pointer / region failure.
+        ///
+        /// <para>Used by the Avalonia import path to obtain the CURRENT ROM palette
+        /// so <see cref="RgbaToIndexed"/> can call
+        /// <see cref="ImageImportCore.RemapToMultiPalette"/> against it — the
+        /// imported PNG does not carry an indexed palette in SkiaSharp, so we re-
+        /// index against the existing ROM palette.</para>
+        /// </summary>
+        public byte[] ReadCurrentMainPalette()
+        {
+            ROM rom = CoreState.ROM;
+            if (rom?.RomInfo == null) return null;
+            uint pointerSlot = rom.RomInfo.worldmap_big_palette_pointer;
+            if (pointerSlot == 0) return null;
+            // 4-byte bounds guard before u32 read.
+            if ((ulong)pointerSlot + 4 > (ulong)rom.Data.Length) return null;
+            uint encoded = rom.u32(pointerSlot);
+            if (!U.isPointer(encoded)) return null;
+            uint addr = U.toOffset(encoded);
+            if (!U.isSafetyOffset(addr, rom)) return null;
+            const int palBytes = 4 * 16 * 2; // 128
+            if ((ulong)addr + palBytes > (ulong)rom.Data.Length) return null;
+            byte[] pal = new byte[palBytes];
+            Array.Copy(rom.Data, addr, pal, 0, palBytes);
+            return pal;
+        }
+
+        /// <summary>
+        /// Import the main field map (image + palette + palette-map) under the given
+        /// indexed-pixel buffer + GBA palette. Caller wraps in UndoService.Begin/Commit/Rollback.
+        /// Returns null on success, or an error string on failure.
+        /// </summary>
+        public string DoMainImport(byte[] indexedPixels, byte[] gbaPalette128)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null) return "ROM not loaded.";
+            var result = ImageWorldMapCore.ImportMainFieldMap(rom, indexedPixels, gbaPalette128);
+            return result.Success ? null : result.Error;
+        }
+
+        /// <summary>
+        /// #1064 PR1 — import the World Map EVENT image (two-stream TSA) from a
+        /// 240×160 RGBA source. Delegates to
+        /// <see cref="ImageWorldMapCore.ImportEvent"/> which reduces to a 256×160
+        /// banked canvas (method-4 "World Map (event)"), encodes the multi-bank TSA,
+        /// and writes ZIMAGE (LZ77) + ZHEADERTSA (LZ77) + raw 128-byte palette under
+        /// the caller's ambient undo scope. Returns null on success, or an error
+        /// string on failure (ROM byte-identical on any failure).
+        /// </summary>
+        public string ImportEvent(byte[] rgba, int srcWidth, int srcHeight)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null) return "ROM not loaded.";
+            bool ok = ImageWorldMapCore.ImportEvent(rom, rgba, srcWidth, srcHeight, out string error);
+            return ok ? null : error;
+        }
+
+        /// <summary>
+        /// #1064 PR2 — import the World Map county BORDER graphic (OAM/AP assembly)
+        /// from the two already-decoded INDEXED sheets (the main border sheet + its
+        /// <c>_NAME</c> companion, each 248×160) + the 16-color palette. Delegates to
+        /// <see cref="ImageWorldMapCore.ImportBorder"/>, which assembles the seat +
+        /// AP-data block and LZ77-writes the image to the selected record's P0 + raw-
+        /// writes the AP to P4 under the caller's ambient undo scope. Returns null on
+        /// success, or an error string on failure (ROM byte-identical on any failure).
+        /// </summary>
+        public string ImportBorder(byte[] sheetIndexed, byte[] nameIndexed,
+            byte[] palette16, uint originX, uint originY)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null) return "ROM not loaded.";
+            if (BorderCurrentAddr == 0) return "Select a border record first.";
+            bool ok = ImageWorldMapCore.ImportBorder(
+                rom, sheetIndexed, nameIndexed, palette16,
+                originX, originY, BorderCurrentAddr, out string error);
+            return ok ? null : error;
+        }
+
+        /// <summary>
+        /// Import only the dark palette (128 bytes) under the ambient undo scope.
+        /// Returns null on success, or an error string on failure.
+        /// </summary>
+        public string DoDarkImport(byte[] gbaDarkPalette128)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null) return "ROM not loaded.";
+            var result = ImageWorldMapCore.ImportDarkPalette(rom, gbaDarkPalette128);
+            return result.Success ? null : result.Error;
+        }
+
+        /// <summary>
+        /// Render the FE8 dark field map preview via
+        /// <see cref="ImageWorldMapCore.TryRenderDarkFieldMap"/>.
+        /// FE8-only; returns null for FE6/FE7 or any bad pointer.
+        /// </summary>
+        public IImage TryRenderDarkFieldMap() => ImageWorldMapCore.TryRenderDarkFieldMap(CoreState.ROM);
     }
 }

@@ -43,6 +43,7 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         long _romSize;
         long _estimatedFreeSpace;
         bool _hasUnsavedChanges;
+        bool _isDecompMode;
 
         /// <summary>Observable list of recent files for the menu.</summary>
         public ObservableCollection<RecentFileEntry> RecentFiles { get; } = new();
@@ -72,6 +73,62 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             get => _hasUnsavedChanges;
             set { SetField(ref _hasUnsavedChanges, value); OnPropertyChanged(nameof(WindowTitle)); }
         }
+
+        /// <summary>
+        /// True when a decomp project is open (#1129 slice 1). Drives the toolbar
+        /// "build preview" badge visibility. Mirrors <see cref="CoreState.IsDecompMode"/>.
+        /// </summary>
+        public bool IsDecompMode
+        {
+            get => _isDecompMode;
+            set { SetField(ref _isDecompMode, value); OnPropertyChanged(nameof(DecompBadgeText)); }
+        }
+
+        /// <summary>
+        /// True when a source-backed write (#1132) flagged the project for rebuild.
+        /// Reads <see cref="CoreState"/> directly so it cannot go stale; the setter
+        /// only nudges the badge to re-evaluate.
+        /// </summary>
+        public bool DecompNeedsRebuild
+        {
+            get => CoreState.DecompProject?.NeedsRebuild == true;
+            set { OnPropertyChanged(nameof(DecompNeedsRebuild)); OnPropertyChanged(nameof(DecompBadgeText)); }
+        }
+
+        /// <summary>
+        /// Toolbar badge text shown while a decomp project is open. Appends a
+        /// "needs rebuild" hint after a source-backed write (#1132).
+        /// </summary>
+        public string DecompBadgeText =>
+            CoreState.DecompProject?.NeedsRebuild == true
+                ? R._("Source-backed project · ROM is a build preview") + R._(" · needs rebuild")
+                : R._("Source-backed project · ROM is a build preview");
+
+        /// <summary>Re-read decomp mode from CoreState. Call after ROM/project loads.</summary>
+        public void RefreshDecompMode()
+        {
+            IsDecompMode = CoreState.IsDecompMode;
+            OnPropertyChanged(nameof(DecompNeedsRebuild));
+            OnPropertyChanged(nameof(DecompBadgeText));
+            OnPropertyChanged(nameof(DecompStale));
+            OnPropertyChanged(nameof(DecompStaleText));
+        }
+
+        string _decompBuildOutput = "";
+
+        /// <summary>Captured stdout+stderr from the most recent build run.</summary>
+        public string DecompBuildOutput
+        {
+            get => _decompBuildOutput;
+            set => SetField(ref _decompBuildOutput, value);
+        }
+
+        /// <summary>True when the built ROM might be out of date.</summary>
+        public bool DecompStale => DecompBuildCore.IsStale(CoreState.DecompProject);
+
+        /// <summary>Hint text shown when the preview ROM may be stale.</summary>
+        public string DecompStaleText =>
+            DecompStale ? R._("Preview may be stale — rebuild") : "";
 
         /// <summary>
         /// Computed window title: "FEBuilderGBA - [filename] *" when dirty,
@@ -124,6 +181,7 @@ namespace FEBuilderGBA.Avalonia.ViewModels
                 EstimatedFreeSpace = EstimateFreeSpace(CoreState.ROM);
                 StatusText = $"{RomFilename} | {RomVersion} | {RomSize:N0} " + R._("bytes") + $" | " + R._("Free:") + $" ~{EstimatedFreeSpace:N0} " + R._("bytes");
                 HasUnsavedChanges = false;
+                IsDecompMode = CoreState.IsDecompMode;
             }
             else
             {
@@ -134,6 +192,7 @@ namespace FEBuilderGBA.Avalonia.ViewModels
                 EstimatedFreeSpace = 0;
                 StatusText = R._("No ROM loaded");
                 HasUnsavedChanges = false;
+                IsDecompMode = false;
             }
         }
 

@@ -10,10 +10,14 @@
 //   - Offsets-throughout contract: `_paletteOffset`, `_sourcePointerSlot` are
 //     ROM offsets internally. The public PaletteAddress property converts
 //     offset->pointer for display (user-facing).
-//   - 32-color mode (Is32ColorMode / WarningVisible) is honestly deferred:
-//     defaults to false; flipping it on requires the WF
-//     ImageUtil.GetPalette16Count(Bitmap) Core extraction which depends on
-//     sample rendering. Marked as KnownGap (no follow-up issue per task scope).
+//   - 32-color mode (Is32ColorMode / WarningVisible) is now driven by the Core
+//     port BattleAnimeRendererCore.CountAnimationPaletteBanks (#1033) — an
+//     animation-wide CONSERVATIVE OAM palette-bank scan replacing WF
+//     ImageUtil.GetPalette16Count(DrawBitmap). The banner turns on when the scan
+//     finds a non-affine sprite using a 16-color bank >= 1 (palette_count >= 2),
+//     mirroring WF Is32ColorMode = (palette_count >= 2). This restores the
+//     banner only; the WF JumpTo palette-index-0 redraw coupling remains out of
+//     scope.
 using System;
 using System.Collections.Generic;
 using FEBuilderGBA.Avalonia.Services;
@@ -98,9 +102,11 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         }
 
         /// <summary>
-        /// Whether the 32-color-mode warning is visible.
-        /// Honestly deferred per Finding #2 — always false until WF
-        /// ImageUtil.GetPalette16Count is ported to Core.
+        /// Whether the 32-color-mode warning banner is visible. Set by
+        /// <see cref="LoadEntry"/> to <see cref="Is32ColorMode"/> — true when the
+        /// loaded animation's OAM sprites use more than one 16-color palette bank
+        /// (#1033), detected via
+        /// <c>BattleAnimeRendererCore.CountAnimationPaletteBanks</c>.
         /// </summary>
         public bool WarningVisible
         {
@@ -109,8 +115,11 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         }
 
         /// <summary>
-        /// Whether the current animation uses 32-color mode. Honestly
-        /// deferred (always false). See WarningVisible comment.
+        /// Whether the currently-loaded animation uses 32-color (multi-bank)
+        /// mode. Set by <see cref="LoadEntry"/> from
+        /// <c>BattleAnimeRendererCore.CountAnimationPaletteBanks(recordOffset) &gt;= 2</c>
+        /// (#1033), mirroring WF <c>Is32ColorMode = (palette_count &gt;= 2)</c>.
+        /// Drives <see cref="WarningVisible"/>.
         /// </summary>
         public bool Is32ColorMode
         {
@@ -251,9 +260,19 @@ namespace FEBuilderGBA.Avalonia.ViewModels
                 }
             }
 
-            // 32-color mode detection is honestly deferred — see class doc.
-            _is32ColorMode = false;
-            _warningVisible = false;
+            // #1033: 32-color mode detection — port of WF
+            // ImageUtil.GetPalette16Count(DrawBitmap) via an OAM palette-bank scan.
+            // The animation record begins at _sourcePointerSlot - 0x1C (the palette
+            // pointer lives at record+0x1C), the same derivation
+            // RenderSampleBattleAnime uses.
+            int bankCount = 1;
+            if (_sourcePointerSlot >= PalettePointerOffsetInRecord)
+            {
+                uint recordOffset = _sourcePointerSlot - PalettePointerOffsetInRecord;
+                bankCount = BattleAnimeRendererCore.CountAnimationPaletteBanks(recordOffset);
+            }
+            _is32ColorMode = bankCount >= 2;   // mirrors WF: Is32ColorMode = (palette_count >= 2)
+            _warningVisible = _is32ColorMode;
 
             IsLoaded = true;
             OnPropertyChanged(nameof(PaletteAddress));
@@ -262,6 +281,69 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             OnPropertyChanged(nameof(SourcePointerSlotDisplay));
             OnPropertyChanged(nameof(WarningVisible));
             OnPropertyChanged(nameof(Is32ColorMode));
+        }
+
+        /// <summary>
+        /// Render the 12-frame battle-animation sample-preview grid for the
+        /// currently-loaded entry, recolored with the active palette type
+        /// (<see cref="PaletteTypeIndex"/>). Mirrors WinForms
+        /// <c>ImageBattleAnimePalletForm.DrawSample(BattleAnimeID, paletteIndex)</c>
+        /// (Phase 1 — uses the SAVED ROM palette, exactly like WF; live-spinner
+        /// edits are out of scope because WF also previews the ROM palette).
+        ///
+        /// <para>The animation record offset is derived from the back-pointer
+        /// slot: <c>_sourcePointerSlot</c> is <c>entryOffset + 0x1C</c> (the
+        /// palette pointer lives at record+0x1C), so the record begins at
+        /// <c>_sourcePointerSlot - 0x1C</c>. This is the same 0-based record
+        /// the list loop produced (no WF <c>id-1</c> conversion).</para>
+        ///
+        /// <para>Returns null when no entry is loaded / the ROM or image
+        /// service is unavailable / the record is unresolvable / there is no
+        /// non-blank frame — the caller (view) treats null as "clear preview".</para>
+        /// </summary>
+        public IImage RenderSampleBattleAnime()
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null || CoreState.ImageService == null) return null;
+            if (_sourcePointerSlot < PalettePointerOffsetInRecord) return null;
+
+            uint recordOffset = _sourcePointerSlot - PalettePointerOffsetInRecord;
+            return BattleAnimeRendererCore.RenderSampleBattleAnime(recordOffset, _paletteTypeIndex);
+        }
+
+        /// <summary>
+        /// Apply a 16-color GBA palette (32 bytes, RGB555 u16 LE pairs) to
+        /// the VM R/G/B arrays. Mirrors WinForms
+        /// <c>PaletteFormRef.MakePaletteBitmapToUI(bitmap, palette_index:0)</c>.
+        ///
+        /// <para>This is the injectable seam used by the file-import path and
+        /// by unit tests (pass a hand-crafted 32-byte array instead of a
+        /// file-dialog result). Caller wraps <see cref="Write"/> in
+        /// <c>UndoService.Begin/Commit/Rollback</c> after this; this method
+        /// itself is pure-state (no ROM writes).</para>
+        /// </summary>
+        /// <param name="gbaPalette16">
+        /// 32 bytes: 16 GBA u16 colors in little-endian RGB555 format.
+        /// Must be non-null and at least 32 bytes. Excess bytes are ignored.
+        /// </param>
+        /// <returns>
+        /// <c>true</c> on success; <c>false</c> if null or shorter than 32 bytes.
+        /// </returns>
+        public bool DoImport(byte[] gbaPalette16)
+        {
+            if (gbaPalette16 == null || gbaPalette16.Length < ImageBattleAnimePaletteCore.SlotByteSize)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < ImageBattleAnimePaletteCore.ColorsPerSlot; i++)
+            {
+                ushort gba = (ushort)(gbaPalette16[i * 2] | (gbaPalette16[i * 2 + 1] << 8));
+                _r[i] = (byte)(((gba) & 0x1F) << 3);
+                _g[i] = (byte)(((gba >> 5) & 0x1F) << 3);
+                _b[i] = (byte)(((gba >> 10) & 0x1F) << 3);
+            }
+            return true;
         }
 
         /// <summary>

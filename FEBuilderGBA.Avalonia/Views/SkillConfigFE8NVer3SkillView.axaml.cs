@@ -28,6 +28,7 @@ namespace FEBuilderGBA.Avalonia.Views
     {
         readonly SkillConfigFE8NVer3SkillViewModel _vm = new();
         readonly UndoService _undoService = new();
+        readonly SkillConfigAnimePreview _animePreview = new();
         bool _suppressZoomChange;
         bool _suppressFrameChange;
         Bitmap? _currentIconBitmap;
@@ -41,12 +42,81 @@ namespace FEBuilderGBA.Avalonia.Views
         {
             InitializeComponent();
             EntryList.SelectedAddressChanged += OnSelected;
+
+            // #930 — wire the 5 embedded sub-list editors: inject the host's
+            // shared UndoService, set titles, and re-sync on any mutation (C1).
+            UnitSubEditor.UndoService = _undoService;
+            ClassSubEditor.UndoService = _undoService;
+            ItemSubEditor.UndoService = _undoService;
+            Item2SubEditor.UndoService = _undoService;
+            CompositeSubEditor.UndoService = _undoService;
+            UnitSubEditor.SetTitle(R._("Unit Skill Sub-list"));
+            ClassSubEditor.SetTitle(R._("Class Skill Sub-list"));
+            ItemSubEditor.SetTitle(R._("Item Skill Sub-list"));
+            Item2SubEditor.SetTitle(R._("Item2 Skill Sub-list"));
+            CompositeSubEditor.SetTitle(R._("Composite Skill Sub-list"));
+            // Per-instance AutomationId prefixes so the 5 embedded editors don't
+            // collide within this view (the inner controls share static ids).
+            UnitSubEditor.ApplyAutomationIdPrefix("SkillConfigFE8NVer3Skill_UnitSubEditor");
+            ClassSubEditor.ApplyAutomationIdPrefix("SkillConfigFE8NVer3Skill_ClassSubEditor");
+            ItemSubEditor.ApplyAutomationIdPrefix("SkillConfigFE8NVer3Skill_ItemSubEditor");
+            Item2SubEditor.ApplyAutomationIdPrefix("SkillConfigFE8NVer3Skill_Item2SubEditor");
+            CompositeSubEditor.ApplyAutomationIdPrefix("SkillConfigFE8NVer3Skill_CompositeSubEditor");
+            UnitSubEditor.Changed += OnSubListChanged;
+            ClassSubEditor.Changed += OnSubListChanged;
+            ItemSubEditor.Changed += OnSubListChanged;
+            Item2SubEditor.Changed += OnSubListChanged;
+            CompositeSubEditor.Changed += OnSubListChanged;
+
             Opened += (_, _) => LoadList();
             Closed += (_, _) =>
             {
                 DisposeBitmap(ref _currentIconBitmap);
                 DisposeBitmap(ref _currentPreviewBitmap);
+                _animePreview.Clear();
             };
+        }
+
+        /// <summary>
+        /// Load the 5 sub-list editors against the per-skill pointer slots.
+        /// Unit +4 / Class +8 / Item +12 / Item2 +16 / Composite +20. All are
+        /// real Px slots in the fixed v3 sizeof-24+ layout (no stride gate).
+        /// The Composite tab decorates ids via the VM's ResolveCompositeName
+        /// (the FE8N main-list 『...』 skill text), NOT NameResolver.GetSkillName
+        /// (B1).
+        /// </summary>
+        void LoadSubEditors()
+        {
+            uint row = _vm.CurrentRowAddr;
+            if (row == 0) return;
+            UnitSubEditor.Load(row + 4, NameResolver.GetUnitName, true);
+            ClassSubEditor.Load(row + 8, NameResolver.GetClassName, true);
+            ItemSubEditor.Load(row + 12, NameResolver.GetItemName, true);
+            Item2SubEditor.Load(row + 16, NameResolver.GetItemName, true);
+            CompositeSubEditor.Load(row + 20, _vm.ResolveCompositeName, true);
+        }
+
+        /// <summary>
+        /// C1 — after any sub-list op repoints a Px slot, re-run the host's
+        /// LoadEntry to re-read the now-updated Px offsets into its cache, then
+        /// reload the editors. Keeps a subsequent main-row Write idempotent
+        /// w.r.t. the repoint instead of reverting it + orphaning the new array.
+        /// </summary>
+        void OnSubListChanged()
+        {
+            uint row = _vm.CurrentRowAddr;
+            if (row == 0) return;
+            _vm.IsLoading = true;
+            try
+            {
+                _vm.LoadEntry(row);
+                UpdateUI();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("SkillConfigFE8NVer3SkillView.OnSubListChanged failed: {0}", ex.Message);
+            }
+            finally { _vm.IsLoading = false; _vm.MarkClean(); }
         }
 
         static void DisposeBitmap(ref Bitmap? bmp)
@@ -148,22 +218,9 @@ namespace FEBuilderGBA.Avalonia.Views
             CompositeSkillPointerBox.Value = _vm.CompositeSkillPointer;
             AnimationPointerBox.Value = _vm.AnimationPointer;
 
-            // Sub-list tab base addresses + entry counts (informational only - actual
-            // sub-list editing is a KnownGap tracked by #374).
-            UnitTabBaseAddrLabel.Content = $"Sub-list base: 0x{_vm.UnitSkillPointer:X08}";
-            ClassTabBaseAddrLabel.Content = $"Sub-list base: 0x{_vm.ClassSkillPointer:X08}";
-            ItemTabBaseAddrLabel.Content = $"Sub-list base: 0x{_vm.ItemSkillPointer:X08}";
-            Item2TabBaseAddrLabel.Content = $"Sub-list base: 0x{_vm.Item2SkillPointer:X08}";
-            CompositeTabBaseAddrLabel.Content = $"Sub-list base: 0x{_vm.CompositeSkillPointer:X08}";
-
-            // Entry counts derived by walking the sub-list u8 terminator (WF
-            // sub-list iteration predicate: terminate when u8(addr) == 0).
-            // Addresses Copilot CLI PR-review finding #2 (round 1).
-            UnitTabCountLabel.Content = $"Entry count: {CountSubListEntries(rom, _vm.UnitSkillPointer)}";
-            ClassTabCountLabel.Content = $"Entry count: {CountSubListEntries(rom, _vm.ClassSkillPointer)}";
-            ItemTabCountLabel.Content = $"Entry count: {CountSubListEntries(rom, _vm.ItemSkillPointer)}";
-            Item2TabCountLabel.Content = $"Entry count: {CountSubListEntries(rom, _vm.Item2SkillPointer)}";
-            CompositeTabCountLabel.Content = $"Entry count: {CountSubListEntries(rom, _vm.CompositeSkillPointer)}";
+            // Load the 5 embedded sub-list editors against the per-skill pointer
+            // SLOTs (CurrentRowAddr + 4/8/12/16/20).
+            LoadSubEditors();
 
             // Icon Image render.
             try
@@ -185,18 +242,27 @@ namespace FEBuilderGBA.Avalonia.Views
             AnimationPanel.IsVisible = _vm.IsAnimationValid;
             if (_vm.IsAnimationValid)
             {
+                // #1010 — render the per-frame preview via the cross-platform
+                // READ-ONLY SkillSystemsAnimeExportCore decode (cached by anime
+                // pointer in _animePreview).
+                bool hasFrames = _animePreview.Load(CoreState.ROM, _vm.AnimationPointer);
+                int frameCount = _animePreview.FrameCount;
+                // Clamp SelectedFrame into range BEFORE rendering (a shorter
+                // animation on a same-row pointer change).
+                if (frameCount > 0 && _vm.SelectedFrame >= (uint)frameCount) _vm.SelectedFrame = (uint)(frameCount - 1);
                 _suppressFrameChange = true;
-                try { ShowFrameUpDown.Value = _vm.SelectedFrame; }
+                try
+                {
+                    ShowFrameUpDown.Maximum = Math.Max(0, frameCount - 1);
+                    ShowFrameUpDown.Value = _vm.SelectedFrame;
+                }
                 finally { _suppressFrameChange = false; }
-
                 BinInfoBox.Text = _vm.BinInfoText;
-                // Real frame rendering depends on ImageUtilSkillSystemsAnimeCreator
-                // (#500). Until that moves to Core, leave the preview Image
-                // blank but show the animation address text.
-                SetPreviewBitmap(null);
+                SetPreviewBitmap(hasFrames ? _animePreview.TryGetFrameBitmap((int)_vm.SelectedFrame) : null);
             }
             else
             {
+                _animePreview.Clear();
                 SetPreviewBitmap(null);
                 BinInfoBox.Text = "";
             }
@@ -222,41 +288,16 @@ namespace FEBuilderGBA.Avalonia.Views
                 _vm.Write();
                 _undoService.Commit();
                 _vm.MarkClean();
+                // #1010 — the animation pointer may have changed; drop the
+                // cached decode and re-render the preview for the new pointer.
+                _animePreview.Clear();
+                UpdateUI();
             }
             catch (Exception ex)
             {
                 _undoService.Rollback();
                 Log.Error("SkillConfigFE8NVer3SkillView.Write failed: {0}", ex.Message);
             }
-        }
-
-        /// <summary>
-        /// Count the entries in a sub-list pointed at by <paramref name="subListBase"/>.
-        /// WF iteration predicate (`SkillConfigFE8NVer3SkillForm.{N1..N5}_Init`
-        /// readCount callback) terminates when `u8(addr) == 0`. Returns 0 if
-        /// the pointer is null/unsafe or the table is empty.
-        /// Mirrors the WF N1..N5 InputFormRef block-size=1 iteration. Capped
-        /// at 256 entries to bound the walk.
-        ///
-        /// Addresses Copilot CLI PR-review finding #2 (round 1) - the AXAML
-        /// `Entry count: -` placeholder must be replaced with real counts so
-        /// the plan claim ("surface sub-list base + entry count") holds.
-        /// </summary>
-        static int CountSubListEntries(ROM rom, uint subListBase)
-        {
-            if (rom?.Data == null) return 0;
-            if (subListBase == 0) return 0;
-            if (!U.isSafetyOffset(subListBase, rom)) return 0;
-
-            int count = 0;
-            for (uint i = 0; i < 256; i++)
-            {
-                uint addr = subListBase + i;
-                if (addr >= (uint)rom.Data.Length) break;
-                if (rom.u8(addr) == 0) break;
-                count++;
-            }
-            return count;
         }
 
         void SetIconBitmap(Bitmap? bmp)
@@ -286,39 +327,111 @@ namespace FEBuilderGBA.Avalonia.Views
         // #500 / #374. Mirrors the exact pattern used by PR #598.
         // -----------------------------------------------------------
 
-        void ImageImport_Click(object? sender, RoutedEventArgs e)
+        // #898 — real skill-icon Image Import/Export via the shared
+        // SkillConfigIconIoHelper. FE8N v3 icon storage mirrors v2 exactly:
+        // rom.p32(icon_pointer) + 128 * (0x100 + id), with the palette chosen
+        // on the per-skill W2/Palette field (==0 -> system_weapon_icon_palette,
+        // else icon_palette). All addresses re-derived fresh under the live ROM.
+        bool TryResolveIconAddrs(ROM rom, out uint iconByteAddr, out uint paletteAddr)
         {
-            Log.Debug("SkillConfigFE8NVer3SkillView.ImageImport_Click invoked - disabled until Core extraction lands (#500)");
+            iconByteAddr = 0;
+            paletteAddr = 0;
+            if (rom?.RomInfo == null) return false;
+            if (!U.isSafetyOffset(rom.RomInfo.icon_pointer + 3, rom)) return false;
+
+            uint iconBaseAddr = rom.p32(rom.RomInfo.icon_pointer);
+            if (!U.isSafetyOffset(iconBaseAddr, rom)) return false;
+            iconByteAddr = iconBaseAddr + SkillConfigIconIoHelper.IconByteSize * (0x100 + _vm.SelectedId);
+
+            uint palettePointerAddr = (_vm.Palette == 0)
+                ? rom.RomInfo.system_weapon_icon_palette_pointer
+                : rom.RomInfo.icon_palette_pointer;
+            if (!U.isSafetyOffset(palettePointerAddr + 3, rom)) return false;
+            paletteAddr = rom.p32(palettePointerAddr);
+            return U.isSafetyOffset(paletteAddr, rom);
         }
 
-        void ImageExport_Click(object? sender, RoutedEventArgs e)
+        async void ImageImport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigFE8NVer3SkillView.ImageExport_Click invoked - disabled until Core extraction lands (#500)");
+            ROM rom = CoreState.ROM;
+            if (rom == null || !_vm.IsLoaded || _vm.SkillBaseAddress == 0) return;
+            if (!TryResolveIconAddrs(rom, out uint iconByteAddr, out uint paletteAddr)) return;
+
+            string? err = await SkillConfigIconIoHelper.ImportIconAsync(
+                this, rom, iconByteAddr, paletteAddr, _undoService);
+            if (err == null) return; // user cancelled — do not refresh.
+            if (err != "")
+            {
+                Log.Notify("SkillConfigFE8NVer3SkillView.ImageImport_Click: " + err);
+                return;
+            }
+
+            UpdateUI();
+            LoadList();
+            EntryList.SelectAddress(_vm.CurrentAddr);
         }
 
-        void AnimationImport_Click(object? sender, RoutedEventArgs e)
+        async void ImageExport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigFE8NVer3SkillView.AnimationImport_Click invoked - disabled until Core extraction lands (#500)");
+            ROM rom = CoreState.ROM;
+            if (rom == null || !_vm.IsLoaded || _vm.SkillBaseAddress == 0) return;
+            if (!TryResolveIconAddrs(rom, out uint iconByteAddr, out uint paletteAddr)) return;
+
+            await SkillConfigIconIoHelper.ExportIconAsync(this, rom, iconByteAddr, paletteAddr);
         }
 
-        void AnimationExport_Click(object? sender, RoutedEventArgs e)
+        // #913 SLICE 1 — real skill-anime import via SkillSystemsAnimeImportCore
+        // (FE8J path; FE8U shows a clean not-supported message, ZERO mutation).
+        async void AnimationImport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigFE8NVer3SkillView.AnimationExport_Click invoked - disabled until Core extraction lands (#500)");
+            if (!_vm.IsLoaded) return;
+            bool ok = await SkillConfigAnimeImportHelper.ImportAsync(
+                this, _vm.AnimationPointer, _undoService);
+            if (!ok) return;
+
+            // #1010 — the animation bytes changed; drop the cached decode.
+            _animePreview.Clear();
+            OnSelected(_vm.CurrentAddr);
+            LoadList();
+            EntryList.SelectAddress(_vm.CurrentAddr);
+        }
+
+        // #910 — real animation export via SkillSystemsAnimeExportCore.
+        async void AnimationExport_Click(object? sender, RoutedEventArgs e)
+        {
+            if (!_vm.IsLoaded) return;
+            await SkillConfigAnimeExportHelper.ExportAsync(this, _vm.AnimationPointer, _vm.SelectedId);
         }
 
         void JumpToEditor_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigFE8NVer3SkillView.JumpToEditor_Click invoked - disabled until ToolAnimationCreatorView.Init lands (#500)");
+            // #1115: seed the Animation Creator from the selected skill's animation
+            // (read-only). Probe-before-open so a 0/empty pointer shows an honest
+            // message instead of a blank Creator. Replaces the #996 carve-out.
+            if (!_vm.IsLoaded) return;
+            SkillConfigAnimeJumpHelper.JumpToCreator(
+                _vm.SelectedId, _vm.AnimationPointer, "SkillConfigFE8NVer3SkillView");
         }
 
         void JumpToCombatArt_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigFE8NVer3SkillView.JumpToCombatArt_Click invoked - disabled until PatchManagerView exposes JumpToSelectStruct (#374)");
-        }
-
-        void ListExpand_Click(object? sender, RoutedEventArgs e)
-        {
-            Log.Debug("SkillConfigFE8NVer3SkillView.ListExpand_Click invoked - disabled until Core extraction lands (#500)");
+            // #1009: filter + select the FE8N SKILL COMBAT ART(Editor) patch via
+            // the PatchManagerView.JumpTo (#428) filter seam, instead of opening
+            // unfiltered with nothing selected. Mirrors WF
+            // PatchForm.JumpToSelectStruct's filter+select step; struct-level row
+            // selection stays a #374 follow-up (PatchManagerView has no inner
+            // struct list). Mirrors the ItemEditorView.OnWeaponDebuffsLink_Click
+            // Navigate -> FindOpen -> JumpTo pattern.
+            try
+            {
+                WindowManager.Instance.Navigate<PatchManagerView>(0);
+                var pmView = WindowManager.Instance.FindOpen<PatchManagerView>();
+                pmView?.JumpTo("FE8N SKILL COMBAT ART", 0);  // filter + select the combat-art patch (struct-level row select = #374 follow-up)
+            }
+            catch (Exception ex)
+            {
+                Log.Error("SkillConfigFE8NVer3SkillView.JumpToCombatArt_Click failed: {0}", ex.Message);
+            }
         }
 
         void ShowFrameUpDown_ValueChanged(object? sender, NumericUpDownValueChangedEventArgs e)
@@ -327,7 +440,8 @@ namespace FEBuilderGBA.Avalonia.Views
             if (!_vm.IsAnimationValid) return;
             _vm.SelectedFrame = (uint)(ShowFrameUpDown.Value ?? 0);
             BinInfoBox.Text = _vm.BinInfoText;
-            // Real per-frame rendering pending #500.
+            // #1010 — render the selected frame from the cached decode.
+            SetPreviewBitmap(_animePreview.TryGetFrameBitmap((int)_vm.SelectedFrame));
         }
 
         void ShowZoomComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)

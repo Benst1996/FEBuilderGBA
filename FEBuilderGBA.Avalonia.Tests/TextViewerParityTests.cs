@@ -9,7 +9,8 @@
 //   - Search Tools tab: address-bar widgets (Read Start Address / Read Count /
 //     Size / Filter / Reload), Search Free Area button, status label.
 //   - Import/Export tab: filter combo + checkbox + limit text (DISABLED stubs).
-//   - Translate tab: from/to combos + Translate button (DISABLED stubs).
+//   - Translate tab: from/to combos populated from the shared ToolTranslateROM
+//     language arrays + ENABLED Translate button (#947 bug #12).
 //   - References tab: cross-references list, Add Reference button (DISABLED),
 //     status label.
 //   - Empty navigation manifest (no WF-side outgoing jumps wired by this PR).
@@ -23,6 +24,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
@@ -170,12 +172,16 @@ namespace FEBuilderGBA.Avalonia.Tests
         }
 
         [AvaloniaFact]
-        public void View_Hosts_ExportFilter_Combo_DisabledByDefault()
+        public void View_Hosts_ExportFilter_Combo_Enabled()
         {
+            // #1028 Slice B enabled the Export Filter combo: it filters the TSV
+            // export to a single WF MakeVarsIDArray category (faithful WF parity).
             var view = new TextViewerView();
             var combo = FindByAutomationId<ComboBox>(view, "TextViewer_ExportFilter_Combo");
             Assert.NotNull(combo);
-            Assert.False(combo!.IsEnabled);
+            Assert.True(combo!.IsEnabled);
+            // Default selection is "All" (index 0 = no filter).
+            Assert.Equal(0, combo.SelectedIndex);
         }
 
         [AvaloniaFact]
@@ -186,12 +192,14 @@ namespace FEBuilderGBA.Avalonia.Tests
         }
 
         [AvaloniaFact]
-        public void View_Hosts_IncludeAIHints_Check_DisabledByDefault()
+        public void View_Hosts_IncludeAIHints_Check_Enabled()
         {
+            // #1028 Slice C enabled the "Include AI Hints" checkbox: when checked,
+            // the TSV export appends per-entry unit translate-info hints.
             var view = new TextViewerView();
             var check = FindByAutomationId<CheckBox>(view, "TextViewer_IncludeAIHints_Check");
             Assert.NotNull(check);
-            Assert.False(check!.IsEnabled);
+            Assert.True(check!.IsEnabled);
         }
 
         [AvaloniaFact]
@@ -200,6 +208,34 @@ namespace FEBuilderGBA.Avalonia.Tests
             var view = new TextViewerView();
             Assert.NotNull(FindByAutomationIdAny(view, "TextViewer_ExportLimitPrefix_Label"));
             Assert.NotNull(FindByAutomationId<TextBox>(view, "TextViewer_ExportLimit_Input"));
+        }
+
+        [AvaloniaFact]
+        public void ExportLimit_Label_SyncsWithExportFilterSelection()
+        {
+            // #1028 Slice B / Copilot finding 4: the Export Limit textbox must
+            // track the selected Export Filter category, not always show "All".
+            var view = new TextViewerView();
+            var combo = FindByAutomationId<ComboBox>(view, "TextViewer_ExportFilter_Combo");
+            var limit = FindByAutomationId<TextBox>(view, "TextViewer_ExportLimit_Input");
+            Assert.NotNull(combo);
+            Assert.NotNull(limit);
+
+            // Default (index 0) = All.
+            Assert.Equal(R._(ExportFilterCore.FilterLabelKeys[0]), limit!.Text);
+
+            // Select "Unit" (index 1) — the limit label must update.
+            combo!.SelectedIndex = 1;
+            Assert.Equal(R._(ExportFilterCore.FilterLabelKeys[1]), limit.Text);
+            Assert.NotEqual(R._(ExportFilterCore.FilterLabelKeys[0]), limit.Text);
+
+            // Select "Chapter Text" (index 10).
+            combo.SelectedIndex = 10;
+            Assert.Equal(R._(ExportFilterCore.FilterLabelKeys[10]), limit.Text);
+
+            // Back to All.
+            combo.SelectedIndex = 0;
+            Assert.Equal(R._(ExportFilterCore.FilterLabelKeys[0]), limit.Text);
         }
 
         // ---- Translate tab ----
@@ -211,33 +247,89 @@ namespace FEBuilderGBA.Avalonia.Tests
             Assert.NotNull(FindByAutomationIdAny(view, "TextViewer_Translate_Tab"));
         }
 
+        // #947 bug #12: the Translate tab is no longer a disabled stub — the
+        // combos are enabled + populated from the shared ToolTranslateROM
+        // language arrays and the Translate button is enabled.
+
         [AvaloniaFact]
-        public void View_Hosts_TranslateFrom_Combo_DisabledByDefault()
+        public void View_Hosts_TranslateFrom_Combo_EnabledAndPopulated()
         {
             var view = new TextViewerView();
             var combo = FindByAutomationId<ComboBox>(view, "TextViewer_TranslateFrom_Combo");
             Assert.NotNull(combo);
-            Assert.False(combo!.IsEnabled);
+            Assert.True(combo!.IsEnabled);
             Assert.NotNull(FindByAutomationIdAny(view, "TextViewer_TranslateFromPrefix_Label"));
+
+            // Populated from the SHARED FromLanguageItemsRaw (3 entries) — never
+            // a duplicated local list.
+            var items = combo.ItemsSource?.Cast<object>().ToList();
+            Assert.NotNull(items);
+            Assert.Equal(ToolTranslateROMViewModel.FromLanguageItemsRaw.Length, items!.Count);
+            Assert.Equal(3, items.Count);
+            // Default index resolves to a real selection.
+            Assert.InRange(combo.SelectedIndex, 0, items.Count - 1);
         }
 
         [AvaloniaFact]
-        public void View_Hosts_TranslateTo_Combo_DisabledByDefault()
+        public void View_Hosts_TranslateTo_Combo_EnabledAndPopulated()
         {
             var view = new TextViewerView();
             var combo = FindByAutomationId<ComboBox>(view, "TextViewer_TranslateTo_Combo");
             Assert.NotNull(combo);
-            Assert.False(combo!.IsEnabled);
+            Assert.True(combo!.IsEnabled);
             Assert.NotNull(FindByAutomationIdAny(view, "TextViewer_TranslateToPrefix_Label"));
+
+            // Populated from the SHARED ToLanguageItemsRaw (11 entries).
+            var items = combo.ItemsSource?.Cast<object>().ToList();
+            Assert.NotNull(items);
+            Assert.Equal(ToolTranslateROMViewModel.ToLanguageItemsRaw.Length, items!.Count);
+            Assert.Equal(11, items.Count);
+            Assert.InRange(combo.SelectedIndex, 0, items.Count - 1);
         }
 
         [AvaloniaFact]
-        public void View_Hosts_Translate_Button_DisabledByDefault()
+        public void View_Hosts_Translate_Button_Enabled()
         {
             var view = new TextViewerView();
             var btn = FindByAutomationId<Button>(view, "TextViewer_Translate_Button");
             Assert.NotNull(btn);
-            Assert.False(btn!.IsEnabled);
+            Assert.True(btn!.IsEnabled);
+        }
+
+        [AvaloniaFact]
+        public void View_Hosts_TranslateStatus_Label()
+        {
+            var view = new TextViewerView();
+            Assert.NotNull(FindByAutomationIdAny(view, "TextViewer_TranslateStatus_Label"));
+        }
+
+        [Fact]
+        public void TranslateCombos_Use_Shared_RawArrays_With_ParseableCodes()
+        {
+            // The view MUST reuse the same canonical language arrays as the
+            // ROM↔ROM translate tool (single source of truth). Verify the
+            // expected counts AND that ParseLanguageKey extracts the expected
+            // language code from a sample item's `code=label` prefix.
+            Assert.Equal(3, ToolTranslateROMViewModel.FromLanguageItemsRaw.Length);
+            Assert.Equal(11, ToolTranslateROMViewModel.ToLanguageItemsRaw.Length);
+
+            Assert.Equal("ja", ToolTranslateROMCore.ParseLanguageKey(ToolTranslateROMViewModel.FromLanguageItemsRaw[0]));
+            Assert.Equal("en", ToolTranslateROMCore.ParseLanguageKey(ToolTranslateROMViewModel.FromLanguageItemsRaw[1]));
+            Assert.Equal("zh-CN", ToolTranslateROMCore.ParseLanguageKey(ToolTranslateROMViewModel.FromLanguageItemsRaw[2]));
+
+            Assert.Equal("ja", ToolTranslateROMCore.ParseLanguageKey(ToolTranslateROMViewModel.ToLanguageItemsRaw[0]));
+            Assert.Equal("zh-TW", ToolTranslateROMCore.ParseLanguageKey(ToolTranslateROMViewModel.ToLanguageItemsRaw[3]));
+        }
+
+        [Fact]
+        public void TranslateDefaultIndexes_Resolve_InRange()
+        {
+            // The view selects defaults via the SAME CalcDefaultLanguageIndexes
+            // logic. Verify the resolved indexes are valid for both arrays.
+            var (from, to) = ToolTranslateROMViewModel.CalcDefaultLanguageIndexes(
+                isMultibyte: false, CoreState.TextEncoding, CoreState.Language ?? "en");
+            Assert.InRange(from, 0, ToolTranslateROMViewModel.FromLanguageItemsRaw.Length - 1);
+            Assert.InRange(to, 0, ToolTranslateROMViewModel.ToLanguageItemsRaw.Length - 1);
         }
 
         // ---- References tab ----
@@ -257,13 +349,26 @@ namespace FEBuilderGBA.Avalonia.Tests
             Assert.NotNull(FindByAutomationIdAny(view, "TextViewer_ReferencesTab_List"));
         }
 
+        // #1028 Slice A: the Add Reference button is now ENABLED and wired to the
+        // OnAddReferenceClick handler (opens TextRefAddDialog; persists via the
+        // ITextIDCache Core seam). Previously a disabled out-of-scope stub.
         [AvaloniaFact]
-        public void View_Hosts_AddReference_Button_DisabledByDefault()
+        public void View_Hosts_AddReference_Button_EnabledAndWired()
         {
             var view = new TextViewerView();
             var btn = FindByAutomationId<Button>(view, "TextViewer_AddReference_Button");
             Assert.NotNull(btn);
-            Assert.False(btn!.IsEnabled);
+            Assert.True(btn!.IsEnabled);
+
+            // The Click handler must be wired. Avalonia's Button raises Click as a
+            // routed event; assert a handler subscription exists via the click
+            // command being absent but the routed Click handler attached. We can't
+            // read XAML-attached handlers via public API, so assert the handler
+            // method exists on the view type (compile-time + reflection guard).
+            var handler = typeof(TextViewerView).GetMethod(
+                "OnAddReferenceClick",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.NotNull(handler);
         }
 
         [AvaloniaFact]
@@ -271,6 +376,48 @@ namespace FEBuilderGBA.Avalonia.Tests
         {
             var view = new TextViewerView();
             Assert.NotNull(FindByAutomationIdAny(view, "TextViewer_ReferencesTabStatus_Label"));
+        }
+
+        // ---- #1028 Slice A: TextRefAddDialog Init + GetComment WF blank convention ----
+
+        [Fact]
+        public void TextRefAddDialogVm_Init_SeedsIdAndComment_AndLocks()
+        {
+            var vm = new TextRefAddDialogViewModel();
+            vm.Init(0x42, "existing");
+            Assert.Equal(0x42, vm.RefId);
+            Assert.Equal("existing", vm.Comment);
+            Assert.True(vm.IsTextIdLocked);
+        }
+
+        [Fact]
+        public void TextRefAddDialogVm_GetComment_NewBlankEntry_StoresSingleSpace()
+        {
+            // WF parity (TextRefAddDialogForm.GetComment): a blank comment on a NEW
+            // entry (no original) is kept as a single space so the ref is retained.
+            var vm = new TextRefAddDialogViewModel();
+            vm.Init(0x1, "");      // new entry, no existing comment
+            vm.Comment = "";       // user leaves it blank
+            Assert.Equal(" ", vm.GetComment());
+        }
+
+        [Fact]
+        public void TextRefAddDialogVm_GetComment_ClearExistingEntry_ReturnsEmpty()
+        {
+            // Clearing an EXISTING entry returns "" so Update removes it (WF parity).
+            var vm = new TextRefAddDialogViewModel();
+            vm.Init(0x1, "was here"); // existing comment
+            vm.Comment = "";          // user clears it
+            Assert.Equal("", vm.GetComment());
+        }
+
+        [Fact]
+        public void TextRefAddDialogVm_GetComment_NonEmpty_PassesThrough()
+        {
+            var vm = new TextRefAddDialogViewModel();
+            vm.Init(0x1, "old");
+            vm.Comment = "new comment";
+            Assert.Equal("new comment", vm.GetComment());
         }
 
         // ---- Tab count ----
@@ -300,16 +447,310 @@ namespace FEBuilderGBA.Avalonia.Tests
         // ============================================================
 
         [Fact]
-        public void View_HasNavigationTargetManifest_With_Zero_Entries()
+        public void View_HasNavigationTargetManifest_With_AddReference_And_BadCharPopup()
         {
-            // TextViewerViewModel implements INavigationTargetSource (per WU2),
-            // and returns an empty manifest because zero outgoing
-            // WindowManager.Navigate<T> callsites are wired in this PR.
+            // #1028 Slice A wired the References-tab "Add Reference" modal-dialog
+            // jump (OnAddReference -> TextRefAddDialogView). #1028 Slice D wires the
+            // bad-character popup jump (OnWriteText -> TextBadCharPopupView).
+            // #1108 wires the final 2 rich-text jumps: Insert Escape Code
+            // (OnInsertEscapeCode -> TextScriptCategorySelectView) and Jump to
+            // Portrait (OnJumpToPortrait -> ImagePortraitView / ImagePortraitFE6View).
             var vm = new TextViewerViewModel();
             Assert.IsAssignableFrom<INavigationTargetSource>(vm);
             var targets = ((INavigationTargetSource)vm).GetNavigationTargets();
             Assert.NotNull(targets);
-            Assert.Empty(targets);
+            Assert.Equal(5, targets.Count);
+
+            var addRef = targets.Single(t => t.CommandName == "OnAddReference");
+            Assert.Equal(typeof(TextRefAddDialogView), addRef.TargetViewType);
+            Assert.Null(addRef.TargetAddress);
+
+            var badChar = targets.Single(t => t.CommandName == "OnWriteText");
+            Assert.Equal(typeof(TextBadCharPopupView), badChar.TargetViewType);
+            Assert.Null(badChar.TargetAddress);
+
+            // #1108 — Insert Escape Code (modal dialog, null target address).
+            var insertEscape = targets.Single(t => t.CommandName == "OnInsertEscapeCode");
+            Assert.Equal(typeof(TextScriptCategorySelectView), insertEscape.TargetViewType);
+            Assert.Null(insertEscape.TargetAddress);
+
+            // #1108 — Jump to Portrait: two rows (non-FE6 + FE6), both with the
+            // dynamic-address sentinel 0u (computed at click time).
+            var portraitTargets = targets.Where(t => t.CommandName == "OnJumpToPortrait").ToList();
+            Assert.Equal(2, portraitTargets.Count);
+            Assert.Contains(portraitTargets, t => t.TargetViewType == typeof(ImagePortraitView));
+            Assert.Contains(portraitTargets, t => t.TargetViewType == typeof(ImagePortraitFE6View));
+            Assert.All(portraitTargets, t => Assert.Equal(0u, t.TargetAddress));
+        }
+
+        // #1108 — the new Edit-tab rich-text jump buttons exist and are wired.
+        [AvaloniaFact]
+        public void View_Hosts_InsertEscapeCode_Button_AndWired()
+        {
+            var view = new TextViewerView();
+            var btn = FindByAutomationId<Button>(view, "TextViewer_InsertEscapeCode_Button");
+            Assert.NotNull(btn);
+            var handler = typeof(TextViewerView).GetMethod(
+                "OnInsertEscapeCodeClick",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.NotNull(handler);
+        }
+
+        [AvaloniaFact]
+        public void View_Hosts_JumpToPortrait_Button_AndWired()
+        {
+            var view = new TextViewerView();
+            var btn = FindByAutomationId<Button>(view, "TextViewer_JumpToPortrait_Button");
+            Assert.NotNull(btn);
+            var handler = typeof(TextViewerView).GetMethod(
+                "OnJumpToPortraitClick",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.NotNull(handler);
+        }
+
+        // #1108 — TextScriptCategorySelectViewModel loads REAL categories (not the
+        // old 8 hardcoded stubs) and the end-to-end reverse-convert + decode yields
+        // the correct face id.
+        // Point CoreState.BaseDirectory at the test assembly output dir, where the
+        // csproj copies config/ (incl. config/data/text_*.txt). Independent of ROM
+        // presence so these VM tests are deterministic on CI runners without a ROM.
+        static string WithConfigBaseDirectory(out string saved)
+        {
+            saved = CoreState.BaseDirectory;
+            string assemblyDir = System.IO.Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? ".";
+            CoreState.BaseDirectory = assemblyDir;
+            return assemblyDir;
+        }
+
+        [Fact]
+        public void TextScriptCategorySelectVm_Init_LoadsRealCategories_NotStub()
+        {
+            WithConfigBaseDirectory(out string saved);
+            try
+            {
+                var vm = new TextScriptCategorySelectViewModel();
+                vm.Init(true);
+                Assert.True(vm.IsLoaded);
+                // Real config has the "show all" {} category + {DISPLAY},
+                // {POSITION}, etc. — never the old stub "Dialogue Text"/... labels.
+                Assert.NotEmpty(vm.Categories);
+                Assert.DoesNotContain("Dialogue Text", vm.Categories);
+                Assert.DoesNotContain("System Text", vm.Categories);
+                // Escape entries loaded; the LoadFace display code (@0010) is present.
+                Assert.NotEmpty(vm.EscapeEntries);
+                Assert.Contains(vm.EscapeEntries, en => en.Code == "@0010");
+            }
+            finally
+            {
+                CoreState.BaseDirectory = saved;
+            }
+        }
+
+        [Fact]
+        public void TextScriptCategorySelectVm_NonDetail_FiltersMoveLoadAndPosition()
+        {
+            WithConfigBaseDirectory(out string saved);
+            try
+            {
+                var vm = new TextScriptCategorySelectViewModel();
+                vm.Init(false);
+                // {MOVE_LOAD} entries (e.g. @0010 LoadFace, @0011 ClearFace) and
+                // {POSITION} entries are filtered out of the escape list in non-detail.
+                Assert.DoesNotContain(vm.EscapeEntries, en => en.Category == "{MOVE_LOAD}");
+                Assert.DoesNotContain(vm.EscapeEntries, en => en.Category == "{POSITION}");
+            }
+            finally
+            {
+                CoreState.BaseDirectory = saved;
+            }
+        }
+
+        [Fact]
+        public void EndToEnd_ConvertFEditorToEscape_Then_FindFirstPortraitFaceId()
+        {
+            // FEditor-display form -> @XXXX escape -> decode -> face id 0x39.
+            string escaped = TextViewerViewModel.ConvertFEditorToEscape("[OpenFarLeft][LoadFace][0x139]");
+            uint? faceId = TextRichControlDecode.FindFirstPortraitFaceId(escaped);
+            Assert.Equal(0x39u, faceId);
+        }
+
+        // ---- #1108 (Copilot PR #1128 re-review): the Insert Escape Code handler
+        // inserts the FEditor-DISPLAY form of the chosen code, NOT the raw @XXXX,
+        // so the EditTextBox stays in a single consistent format (WF SelectEscapeText
+        // -> ConvertEscapeText -> ConvertEscapeToFEditor). These document/guard the
+        // formatter contract the handler now relies on. ----
+
+        [Fact]
+        public void ConvertEscapeToFEditor_MapsKnownCode_ToBracketToken()
+        {
+            // The picker yields a raw @XXXX code; the handler converts it via the
+            // SAME formatter the VM renders DecodedText with before inserting.
+            // @0080@0004 maps to the [LoadOverworldFaces] display token.
+            var prev = CoreState.TextEscape;
+            try
+            {
+                CoreState.TextEscape ??= new TextEscape();
+                string display = TextDisplayFormatter.ConvertEscapeToFEditor("@0080@0004");
+                Assert.NotEqual("@0080@0004", display);
+                Assert.Equal("[LoadOverworldFaces]", display);
+                // The bracket token is what the handler actually inserts.
+                Assert.StartsWith("[", display);
+                Assert.EndsWith("]", display);
+            }
+            finally
+            {
+                CoreState.TextEscape = prev;
+            }
+        }
+
+        [Fact]
+        public void InsertEscape_RoundTrip_DisplayThenReverse_PreservesCode()
+        {
+            // Insert (-> display) then the write path (ConvertFEditorToEscape) must
+            // recover the original @XXXX code: insert+write is lossless.
+            var prev = CoreState.TextEscape;
+            try
+            {
+                CoreState.TextEscape ??= new TextEscape();
+                string code = "@0080@0004";
+                string display = TextDisplayFormatter.ConvertEscapeToFEditor(code);
+                string back = TextViewerViewModel.ConvertFEditorToEscape(display);
+                Assert.Equal(code, back);
+            }
+            finally
+            {
+                CoreState.TextEscape = prev;
+            }
+        }
+
+        // ---- #1108 (Copilot BOT finding 1): OnJumpToPortraitClick must compute the
+        // per-face address in ulong (no uint wrap) and validate the FINAL in-bounds
+        // address before navigating, so a malformed/patch escape with a huge faceId
+        // can't wrap the address or point outside the ROM. Driving the handler needs
+        // a Window + WindowManager + ROM (flaky headless), so this asserts the
+        // overflow-safe guard pattern is present in the handler source. ----
+        [Fact]
+        public void OnJumpToPortrait_Source_HasOverflowSafeAddressGuard()
+        {
+            string? repoRoot = FindRepoRoot();
+            if (repoRoot == null) return;
+            string viewPath = Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views", "TextViewerView.axaml.cs");
+            Assert.True(File.Exists(viewPath), $"TextViewerView.axaml.cs missing at {viewPath}");
+            string src = File.ReadAllText(viewPath);
+
+            // ulong arithmetic for the per-face address (no uint wrap).
+            Assert.Contains("ulong addr64", src);
+            // Final-address in-bounds guard (entry tail must stay inside the ROM)
+            // AND rom-aware safe-offset check before navigating.
+            Assert.Contains("addr64 + dataSize >", src);
+            Assert.Contains("U.isSafetyOffset((uint)addr64, rom)", src);
+            // Distinct honest status for the out-of-range case.
+            Assert.Contains("(Invalid portrait id in this text)", src);
+        }
+
+        // ============================================================
+        // #1028 Slice D — bad-char AntiHuffman routing (Copilot PR #1107 findings 1 & 2)
+        //
+        // ResolveAntiHuffmanInteractionAsync exposes injectable seams
+        // (ShowBadCharPopupAsync / OpenPatchManagerModalAsync) so the routing is
+        // asserted without a real Window. The key invariants:
+        //   (1) ja/zh/ko + "AntiHuffman" popup choice AWAITS the modal Patch Manager
+        //       BEFORE returning (so WriteText's re-check sees a fresh install).
+        //   (2) non-ja/zh/ko routes straight to the Patch Manager (not a silent
+        //       no-op abort).
+        // ============================================================
+
+        [AvaloniaFact]
+        public async Task BadCharFlow_Ja_AntiHuffmanChoice_AwaitsModalPatchManager_BeforeReturn()
+        {
+            string savedLang = CoreState.Language;
+            try
+            {
+                CoreState.Language = "ja";
+                var view = new TextViewerView();
+
+                bool popupShown = false;
+                bool patchManagerOpened = false;
+                bool patchManagerCompletedBeforeReturn = false;
+
+                view.ShowBadCharPopupAsync = _ =>
+                {
+                    popupShown = true;
+                    return Task.FromResult<string?>("AntiHuffman");
+                };
+                view.OpenPatchManagerModalAsync = async () =>
+                {
+                    patchManagerOpened = true;
+                    // Simulate a modal that yields then completes; the awaiter must
+                    // block on this before ResolveAntiHuffmanInteractionAsync returns.
+                    await Task.Yield();
+                    patchManagerCompletedBeforeReturn = true;
+                };
+
+                await view.ResolveAntiHuffmanInteractionAsync("X");
+
+                Assert.True(popupShown, "ja/zh/ko must show the bad-char popup");
+                Assert.True(patchManagerOpened, "AntiHuffman choice must open the Patch Manager");
+                Assert.True(patchManagerCompletedBeforeReturn,
+                    "the modal Patch Manager must be AWAITED (completed) before returning, " +
+                    "so WriteText's subsequent re-check sees a freshly-installed patch");
+            }
+            finally
+            {
+                CoreState.Language = savedLang;
+            }
+        }
+
+        [AvaloniaFact]
+        public async Task BadCharFlow_Ja_GiveUpChoice_DoesNotOpenPatchManager()
+        {
+            string savedLang = CoreState.Language;
+            try
+            {
+                CoreState.Language = "ja";
+                var view = new TextViewerView();
+
+                bool patchManagerOpened = false;
+                view.ShowBadCharPopupAsync = _ => Task.FromResult<string?>("GiveUp");
+                view.OpenPatchManagerModalAsync = () => { patchManagerOpened = true; return Task.CompletedTask; };
+
+                await view.ResolveAntiHuffmanInteractionAsync("X");
+
+                Assert.False(patchManagerOpened,
+                    "GiveUp must NOT open the Patch Manager (WriteText then re-checks and aborts)");
+            }
+            finally
+            {
+                CoreState.Language = savedLang;
+            }
+        }
+
+        [AvaloniaFact]
+        public async Task BadCharFlow_NonCjkLanguage_RoutesToPatchManager_NotSilentAbort()
+        {
+            string savedLang = CoreState.Language;
+            try
+            {
+                CoreState.Language = "en";
+                var view = new TextViewerView();
+
+                bool popupShown = false;
+                bool patchManagerOpened = false;
+                view.ShowBadCharPopupAsync = _ => { popupShown = true; return Task.FromResult<string?>(null); };
+                view.OpenPatchManagerModalAsync = () => { patchManagerOpened = true; return Task.CompletedTask; };
+
+                await view.ResolveAntiHuffmanInteractionAsync("X");
+
+                Assert.False(popupShown, "non-ja/zh/ko must NOT show the ja/zh/ko bad-char popup");
+                Assert.True(patchManagerOpened,
+                    "non-ja/zh/ko must route to the Patch Manager for actionable guidance, " +
+                    "not silently abort with no UI (Copilot finding 2)");
+            }
+            finally
+            {
+                CoreState.Language = savedLang;
+            }
         }
 
         // ============================================================

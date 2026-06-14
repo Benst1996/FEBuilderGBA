@@ -48,6 +48,34 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         byte[]? _otherRomData;
         string _otherRomFilename = string.Empty;
 
+        // ----- Cross-ROM AutoSearch state (#1113) ---
+        // The target ROM's ASM/MAP symbol table, built ONCE in LoadOtherRom (or
+        // seeded in SeedDemoCrossRom). Cached so repeated RunAutoSearch calls do
+        // not reparse the asmmap config. Null when the target ROM could not be
+        // version-detected (name search disabled — mirrors WF LoadTargetROM).
+        IAsmMapFile? _otherRomAsmMap;
+        string _autoSearchSummary = string.Empty;
+
+        // ----- Cached LDR literal-pool maps (#1118 perf) ---
+        // DisassemblerTrumb.MakeLDRMap is a full-ROM scan; rebuilding both maps on
+        // every Auto Search click stalls the UI thread. WF builds/caches these on
+        // target-ROM load (+ via AsmMapFileAsmCache). We cache:
+        //   _targetLdrMap  — built from _otherRomData; invalidated (nulled) on each
+        //                    LoadOtherRom (new target) and on its failure path.
+        //   _sourceLdrMap  — built from CoreState.ROM.Data; tagged with the ROM
+        //                    instance it was built for (_sourceLdrRom) so it is
+        //                    rebuilt only when CoreState.ROM changes (ROM reload).
+        List<DisassemblerTrumb.LDRPointer>? _targetLdrMap;
+        List<DisassemblerTrumb.LDRPointer>? _sourceLdrMap;
+        ROM? _sourceLdrRom;
+
+        /// <summary>
+        /// One-line summary of the last <see cref="RunAutoSearch"/> outcome
+        /// (#1113), e.g. "Matched via name (SomeFunc): direct=0x..., ldr=0x...".
+        /// Bound to the Pointer Tool AutoSearch summary label.
+        /// </summary>
+        public string AutoSearchSummary { get => _autoSearchSummary; set => SetField(ref _autoSearchSummary, value); }
+
         public bool IsLoaded { get => _isLoaded; set => SetField(ref _isLoaded, value); }
         /// <summary>Input ROM address to analyze.</summary>
         public string AddressInput { get => _addressInput; set => SetField(ref _addressInput, value); }
@@ -109,6 +137,18 @@ namespace FEBuilderGBA.Avalonia.ViewModels
 
         public void Initialize()
         {
+            // Mirror WF PointerToolForm ctor defaults (FEBuilderGBA/
+            // PointerToolForm.cs ctor) so the auto-tracking retry +
+            // accept-if-referenced behavior is ON by default (parity — #1118).
+            // Without these the int fields default to 0, which disabled the
+            // retry loop (DecodeAutoTrackLevel returns 0 for AutoTrackingLevel==0)
+            // and treated warnings as fatal (WarningLevel==0).
+            WarningLevel      = 1; // WF WarningLevelComboBox.SelectedIndex = 1 (accept if referenced)
+            TestMatchDataSize = 2; // WF TestMatchDataSizeComboBox.SelectedIndex = 2
+            DataType          = 1; // WF DataType.SelectedIndex = 1 (ASM)
+            GrepType          = 0; // WF GrepType.SelectedIndex = 0 (exact)
+            SlideSize         = 0; // WF SlideComboBox.SelectedIndex = 0
+            AutoTrackingLevel = 2; // WF AutomaticTrackingComboBox.SelectedIndex = 2 (auto-tracking ON)
             IsLoaded = true;
         }
 
@@ -129,6 +169,10 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             if (!TryParseAddress(out uint rawInput))
             {
                 SearchResults = "Invalid address.";
+                // Copilot CLI review point 4: clear stale cross-ROM results on
+                // every early-return path so a previous successful match never
+                // lingers after the current input becomes invalid.
+                ClearOtherRomFields();
                 return;
             }
 
@@ -136,6 +180,7 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             if (rom == null)
             {
                 SearchResults = "No ROM loaded.";
+                ClearOtherRomFields();
                 return;
             }
 
@@ -191,89 +236,216 @@ namespace FEBuilderGBA.Avalonia.ViewModels
                 SearchResults = sb.ToString();
             }
 
-            // Per-result warnings — mirrors WF ERROR_ZERO* / ERROR_VERYFAR*.
-            // WF only renders the labels after the OtherROMAddress / LDR
-            // match phase has populated a real cross-ROM match address; the
-            // checks evaluate THAT address (not the user-typed source).
-            //
-            // The full cross-ROM match path (FindOtherROMData / WithLDR) is
-            // deferred to a follow-up issue. Until that path lands, the
-            // warnings stay hidden: a half-implemented check that flags
-            // "addr > 3/4 of ROM size" on the source address (as previously)
-            // is misleading — it has nothing to do with whether a direct
-            // match exists in the other ROM.
-            //
-            // When OtherRomAddress / OtherRomLdrAddress become populated, we
-            // evaluate the warning against THAT address (mirroring WF's
-            // ERROR_ZERO1 = (rom.u32(matchAddr) == 0) and ERROR_VERYFAR1 =
-            // (matchAddr > rom.Data.Length * 3 / 4) rules).
-            HasZeroAtDirect = EvaluateDirectWarning(out bool directFar, isZero: true);
-            HasVeryFarAtDirect = directFar;
-            HasZeroAtLdr = EvaluateLdrWarning(out bool ldrFar, isZero: true);
-            HasVeryFarAtLdr = ldrFar;
+            // Cross-ROM search (#966): grep the other-ROM buffer for raw +
+            // LDR references to this address and populate the OtherROM* fields
+            // plus the four per-result warning flags. When no other ROM is
+            // loaded, SearchOtherRom clears all four fields + warnings so the
+            // #438 false-positive guard holds (warnings only meaningful once a
+            // real cross-ROM search ran). `addr` is the normalized ROM offset
+            // of the user-entered address — the SAME target SearchPointer used
+            // above (Copilot CLI review point 1: NOT the pointee at addr).
+            SearchOtherRom(addr);
         }
 
         /// <summary>
-        /// Compute the per-result direct-match warnings against the
-        /// <see cref="OtherRomAddress"/> field if it has been populated by a
-        /// successful cross-ROM match. Mirrors WF's check semantics:
-        ///   ERROR_ZERO1   = (rom.u32(matchAddr) == 0)
-        ///   ERROR_VERYFAR1 = (matchAddr > rom.Data.Length * 3 / 4)
-        /// where <c>matchAddr</c> is the address found in the OTHER ROM.
-        /// Returns <c>false</c> for both checks when no cross-ROM match has
-        /// been recorded — this is the explicit fix for the Copilot review
-        /// point about false-positive warnings.
+        /// Cross-ROM pointer search (#966). Greps the loaded other-ROM buffer
+        /// for raw 32-bit pointer references and ARM-Thumb LDR literal-pool
+        /// references to <paramref name="needAddr"/> (the normalized ROM offset
+        /// of the user-entered address), then populates the four OtherROM*
+        /// fields and the four per-result warning flags.
+        ///
+        /// <para>Cross-platform adaptation of WF
+        /// <c>PointerToolForm.FindOtherROMData</c> /
+        /// <c>FindOtherROMDataWithLDR</c>, reusing the Core seams ported under
+        /// #781:</para>
+        /// <list type="bullet">
+        ///   <item><see cref="U.GrepPointerAll(byte[],uint,uint,uint)"/> — raw
+        ///   4-byte-aligned pointer references. The first hit's offset is the
+        ///   reference pointer (<see cref="OtherRomRefPointer"/>); the searched
+        ///   data address is shown as <see cref="OtherRomAddress"/>.</item>
+        ///   <item>The CACHED target LDR map (<c>_targetLdrMap</c>, built once per
+        ///   loaded target via <see cref="EnsureTargetLdrMap"/>) — the first entry
+        ///   whose <c>ldr_data == toPointer(needAddr)</c> gives the literal-pool
+        ///   SLOT offset (NOT the LDR instruction address) as
+        ///   <see cref="OtherRomLdrRefPointer"/>; the data address is
+        ///   <see cref="OtherRomLdrAddress"/>. This is the same slot offset
+        ///   <c>U.GrepPointerAllOnLDR</c> returns, without the per-call full-ROM
+        ///   LDR rescan (#1118 perf).</item>
+        /// </list>
+        ///
+        /// <para>Warnings follow WF semantics (Copilot CLI review point 2): the
+        /// ERROR_ZERO / ERROR_VERYFAR labels are evaluated ONLY when a match was
+        /// found (WF <c>IsDataFound</c> gates on <c>IsFoundAddress</c>). On a
+        /// no-match / danger-zone / no-other-ROM path the fields are cleared and
+        /// the warnings stay false — there is no "ZERO on no-match" branch.</para>
+        ///
+        /// <para>Bounds (Copilot CLI review point 3): the other-ROM display /
+        /// warning guards check <c>_otherRomData.Length</c> explicitly — NOT
+        /// <c>U.isSafetyOffset</c> (which checks <c>CoreState.ROM.Data.Length</c>).
+        /// The grep helpers scan the other-ROM buffer safely on their own.</para>
         /// </summary>
-        bool EvaluateDirectWarning(out bool isFar, bool isZero)
+        void SearchOtherRom(uint needAddr)
+        {
+            // No other ROM loaded -> no cross-ROM search possible. Clear any
+            // stale fields + warnings (Copilot CLI review point 4).
+            if (_otherRomData == null || _otherRomData.Length == 0)
+            {
+                ClearOtherRomFields();
+                return;
+            }
+
+            // Danger-zone guard: the GBA header / low addresses below 0x200 are
+            // never a meaningful pointer target. Mirrors the WF safety floor
+            // (U.isSafetyOffset uses >= 0x200). We deliberately do NOT call
+            // U.isSafetyOffset here because that overload validates against the
+            // CURRENT ROM length, not the other ROM (Copilot CLI review point 3).
+            if (needAddr < 0x200)
+            {
+                ClearOtherRomFields();
+                return;
+            }
+
+            try
+            {
+                // ----- Raw 32-bit pointer references in the other ROM ---------
+                var raw = U.GrepPointerAll(_otherRomData, needAddr);
+                if (raw.Count > 0)
+                {
+                    // OtherRomAddress = the data address we searched for (the
+                    // address referenced in the other ROM); OtherRomRefPointer =
+                    // the offset of the first reference. Mirrors WF
+                    // OtherROMAddress2 / OtherROMRefPointer2.
+                    OtherRomAddress = $"0x{needAddr:X08}";
+                    OtherRomRefPointer = $"0x{raw[0]:X08}";
+                    // Warnings evaluated against the found address (only when a
+                    // match exists — WF IsDataFound parity).
+                    HasZeroAtDirect = EvaluateOtherRomWarning(needAddr, out bool directFar);
+                    HasVeryFarAtDirect = directFar;
+                }
+                else
+                {
+                    // No raw reference -> clear the raw fields; warnings stay
+                    // false (WF hides the labels on no-match).
+                    OtherRomAddress = "";
+                    OtherRomRefPointer = "";
+                    HasZeroAtDirect = false;
+                    HasVeryFarAtDirect = false;
+                }
+
+                // ----- LDR literal-pool references in the other ROM -----------
+                // Use the CACHED target LDR map instead of re-scanning the whole
+                // target ROM via U.GrepPointerAllOnLDR on every call (#1118 perf —
+                // RunSearch runs on every Auto Search click / address change /
+                // NavigateTo). The cached map is built once per loaded target.
+                //
+                // Equivalence: U.GrepPointerAllOnLDR(buf, needAddr) ->
+                // DisassemblerTrumb.GrepLDRData, which does need=toPointer(needAddr)
+                // then returns each literal-pool SLOT OFFSET whose 32-bit word == need.
+                // MakeLDRMap records per LDR: ldr_data = the loaded 32-bit word,
+                // ldr_data_address = that slot offset. So entries with
+                // ldr_data == toPointer(needAddr), reporting ldr_data_address, are
+                // the SAME slot offsets GrepPointerAllOnLDR returns — the displayed
+                // OtherRomLdrRefPointer is identical for the same input.
+                EnsureTargetLdrMap();
+                uint needPtr = U.toPointer(needAddr);
+                DisassemblerTrumb.LDRPointer? ldrHit = null;
+                if (_targetLdrMap != null)
+                {
+                    foreach (var p in _targetLdrMap)
+                    {
+                        if (p != null && p.ldr_data == needPtr) { ldrHit = p; break; }
+                    }
+                }
+                if (ldrHit != null)
+                {
+                    OtherRomLdrAddress = $"0x{needAddr:X08}";
+                    OtherRomLdrRefPointer = $"0x{ldrHit.ldr_data_address:X08}";
+                    HasZeroAtLdr = EvaluateOtherRomWarning(needAddr, out bool ldrFar);
+                    HasVeryFarAtLdr = ldrFar;
+                }
+                else
+                {
+                    OtherRomLdrAddress = "";
+                    OtherRomLdrRefPointer = "";
+                    HasZeroAtLdr = false;
+                    HasVeryFarAtLdr = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                // A grep must never throw on the UI thread. On any fault clear
+                // the fields and surface a diagnostic rather than crashing.
+                // Log.Error is params string[] (NO composite formatting) — use
+                // a single interpolated string so the exception is actually
+                // logged (#969 review point 3).
+                ClearOtherRomFields();
+                Log.Error($"PointerToolViewModel.SearchOtherRom: {ex}");
+            }
+        }
+
+        /// <summary>Window size (bytes) WF samples for the zero-region check.</summary>
+        const uint ZeroRegionWindow = 0x200;
+
+        /// <summary>
+        /// Evaluate the WF ERROR_ZERO / ERROR_VERYFAR warning pair against a
+        /// cross-ROM match address found in the OTHER ROM. Returns the ZERO flag
+        /// — the matched address sits in a zero-FILLED REGION (see
+        /// <see cref="IsZeroRegion"/>); <paramref name="isFar"/> receives the
+        /// VERYFAR flag (the matched address lies in the last quarter of the
+        /// other ROM — a coarse "too far to be a real match" heuristic).
+        ///
+        /// <para>Bounds are checked against <c>_otherRomData.Length</c>
+        /// explicitly (Copilot CLI plan-review point 3); an out-of-bounds match
+        /// address yields both-false (no warning, no throw).</para>
+        /// </summary>
+        bool EvaluateOtherRomWarning(uint matchAddr, out bool isFar)
         {
             isFar = false;
-            // No other ROM loaded -> no direct match yet -> no warning.
             if (_otherRomData == null || _otherRomData.Length == 0) return false;
-            // No OtherRomAddress recorded -> the cross-ROM match path didn't
-            // produce a hit -> no warning to display.
-            if (!TryParseHexAddress(OtherRomAddress, out uint matchAddr)) return false;
-            // Evaluate against the OTHER ROM bytes, mirroring WF.
-            if (matchAddr + 3 >= (uint)_otherRomData.Length) return false;
-            bool zero = U32Read(_otherRomData, matchAddr) == 0;
+            if (matchAddr >= (uint)_otherRomData.Length) return false;
             isFar = matchAddr > (uint)(_otherRomData.Length * 3 / 4);
-            return isZero ? zero : isFar;
+            return IsZeroRegion(_otherRomData, matchAddr, matchAddr + ZeroRegionWindow);
         }
 
         /// <summary>
-        /// LDR-tracked variant of <see cref="EvaluateDirectWarning"/>.
-        /// Evaluates against <see cref="OtherRomLdrAddress"/>. Stays false
-        /// until the LDR-match path is implemented in a follow-up; the new
-        /// guard is `OtherRomLdrAddress` populated AND the address is
-        /// in-bounds for the loaded other-ROM bytes.
+        /// Port of WF <c>PointerToolForm.checkZeroData</c> (#969 review point
+        /// 2): a region <c>[start, end)</c> is "zero" when MORE THAN HALF of its
+        /// bytes are <c>0x00</c>. WF samples a 0x200-byte window from the match
+        /// address. Bounds-safe: <c>end</c> is clamped to the buffer length, and
+        /// a <c>start</c> beyond the buffer returns <c>false</c> — mirroring WF
+        /// exactly so the Avalonia "Zero region" warning agrees with WF and with
+        /// the label text.
         /// </summary>
-        bool EvaluateLdrWarning(out bool isFar, bool isZero)
+        static bool IsZeroRegion(byte[] data, uint start, uint end)
         {
-            isFar = false;
-            if (_otherRomData == null || _otherRomData.Length == 0) return false;
-            if (!TryParseHexAddress(OtherRomLdrAddress, out uint matchAddr)) return false;
-            if (matchAddr + 3 >= (uint)_otherRomData.Length) return false;
-            bool zero = U32Read(_otherRomData, matchAddr) == 0;
-            isFar = matchAddr > (uint)(_otherRomData.Length * 3 / 4);
-            return isZero ? zero : isFar;
+            if (data.Length < start) return false;
+            if (data.Length < end) end = (uint)data.Length;
+            if (start >= end) return false;
+
+            int zeroCount = 0;
+            for (uint i = start; i < end; i++)
+            {
+                if (data[i] == 0x0) zeroCount++;
+            }
+            return zeroCount > (int)(end - start) / 2;
         }
 
-        static bool TryParseHexAddress(string raw, out uint val)
+        /// <summary>
+        /// Reset all four OtherROM* string fields and the four per-result
+        /// warning flags. Called on every early-return / no-match path so a
+        /// previous successful cross-ROM result never lingers (Copilot CLI
+        /// review point 4).
+        /// </summary>
+        void ClearOtherRomFields()
         {
-            val = 0;
-            string text = (raw ?? "").Trim();
-            if (text.Length == 0) return false;
-            if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-                text = text.Substring(2);
-            return uint.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out val);
-        }
-
-        static uint U32Read(byte[] data, uint offset)
-        {
-            if (offset + 3 >= (uint)data.Length) return 0;
-            return data[offset]
-                 | ((uint)data[offset + 1] << 8)
-                 | ((uint)data[offset + 2] << 16)
-                 | ((uint)data[offset + 3] << 24);
+            OtherRomAddress = "";
+            OtherRomRefPointer = "";
+            OtherRomLdrAddress = "";
+            OtherRomLdrRefPointer = "";
+            HasZeroAtDirect = false;
+            HasVeryFarAtDirect = false;
+            HasZeroAtLdr = false;
+            HasVeryFarAtLdr = false;
         }
 
         /// <summary>Search the ROM for all 4-byte-aligned pointer references to the given address.</summary>
@@ -357,19 +529,30 @@ namespace FEBuilderGBA.Avalonia.ViewModels
 
         /// <summary>
         /// Load an "other ROM" file for cross-ROM pointer comparison. Mirrors
-        /// WF <c>PointerToolForm.LoadTargetROM</c> at the gap-sweep scope:
-        /// reads the file bytes, sets <see cref="OtherRomName"/> to the file
-        /// base name, and runs <see cref="RunSearch"/> against the current
-        /// ROM. Full WF AutoSearch behavioural parity (auto-tracking retry,
-        /// source/target LDR map symmetry, ASM-map name search) is intentionally
-        /// out of scope for #438 and deferred to a follow-up issue — the
-        /// gap-sweep acceptance criteria only require the visible UI surface.
+        /// WF <c>PointerToolForm.LoadTargetROM</c>: reads the file bytes ONCE,
+        /// builds and caches the target ROM's ASM/MAP symbol table from those
+        /// same bytes (only when <see cref="UseAsmMap"/> is enabled and the ROM
+        /// version-detects), sets <see cref="OtherRomName"/>, and then — if a
+        /// valid current address is present — runs the full cross-ROM
+        /// <see cref="RunAutoSearch"/> (#1113: auto-tracking retry +
+        /// source/target LDR-literal-pool symmetry + ASM-map name search). When
+        /// no address is entered yet it falls back to the baseline
+        /// <see cref="RunSearch"/> so the same-ROM fields populate.
         /// </summary>
         /// <param name="filename">Absolute path to a GBA ROM (.gba / .bin).</param>
         public void LoadOtherRom(string filename)
         {
             if (string.IsNullOrEmpty(filename) || !File.Exists(filename))
             {
+                // Missing file: clear any stale cross-ROM result so a prior match
+                // is not left visible (consistent with the catch path — Fix 3).
+                _otherRomData = null;
+                _otherRomFilename = string.Empty;
+                _otherRomAsmMap = null;
+                _targetLdrMap = null;
+                OtherRomName = string.Empty;
+                ClearOtherRomFields();
+                AutoSearchSummary = "Failed to load other ROM.";
                 SearchResults = $"Other ROM not found: {filename}";
                 return;
             }
@@ -380,43 +563,373 @@ namespace FEBuilderGBA.Avalonia.ViewModels
                 _otherRomFilename = filename;
                 OtherRomName = Path.GetFileNameWithoutExtension(filename);
 
-                // Re-run search to populate the other-ROM fields from the
-                // newly loaded bytes. The same-ROM fields (PointerValue,
-                // LittleEndianValue) are unchanged but RunSearch is idempotent.
-                RunSearch();
+                // New target ROM -> invalidate the cached target LDR map and
+                // asmmap so they are (re)built for THIS target (#1118 perf cache).
+                _targetLdrMap = null;
+                _otherRomAsmMap = null;
+
+                // Build + cache the target ROM's ASM/MAP symbol table for the
+                // name-search heuristic — ONLY when ASM-map search is enabled
+                // (mirrors WF, which gates name search on UseASMMAPCheckBox). When
+                // UseAsmMap is off, skip the asmmap parse; RunAutoSearch will
+                // rebuild it lazily if the user later re-enables the checkbox.
+                if (UseAsmMap)
+                {
+                    EnsureTargetAsmMap();
+                }
+
+                // Auto-run AutoSearch when a usable address is already entered;
+                // otherwise populate the same-ROM fields via the baseline search.
+                if (TryParseAddress(out uint _))
+                {
+                    RunAutoSearch();
+                }
+                else
+                {
+                    RunSearch();
+                }
             }
             catch (Exception ex)
             {
+                // Log the full exception (with stack trace) for diagnosability,
+                // matching the other PointerTool VM handlers (SearchOtherRom /
+                // RunAutoSearch / EnsureTargetAsmMap). The user-facing
+                // SearchResults keeps the short ex.Message.
+                Log.Error($"PointerToolViewModel.LoadOtherRom: {ex}");
+                // Load failed: drop the target state AND clear any stale cross-ROM
+                // result so a prior successful match is not left visible (Copilot
+                // bot Fix 3). Also null the cached LDR map + asmmap.
                 _otherRomData = null;
                 _otherRomFilename = string.Empty;
+                _otherRomAsmMap = null;
+                _targetLdrMap = null;
                 OtherRomName = string.Empty;
+                ClearOtherRomFields();
+                AutoSearchSummary = "Failed to load other ROM.";
                 SearchResults = $"Failed to load other ROM: {ex.Message}";
             }
         }
 
         /// <summary>
-        /// Mirror of WF <c>PointerToolForm.WhatIsButton_Click</c> at the
-        /// gap-sweep scope (#438). Returns a human-readable hint describing
-        /// the address. The full WF lookup path queries
-        /// <c>Program.AsmMapFileAsmCache.GetAsmMapFile()</c> +
-        /// <c>asmMap.SearchNear</c>; the Core <see cref="IAsmMapCache"/>
-        /// abstraction does not yet expose <c>GetAsmMapFile</c> /
-        /// <c>SearchNear</c>, so AV returns a structured "address+pointer"
-        /// summary derived from the WF logic. Extending IAsmMapCache to
-        /// expose the asm-map surface is tracked as a follow-up for the
-        /// PointerTool full-behaviour port.
+        /// Decode the sparse Avalonia AutoTracking combo index into the WF-hex
+        /// auto-tracking level consumed by <see cref="PointerToolAutoSearchCore.AutoSearch"/>.
+        /// Index 0 = "do not auto-track" (level 0 → single exact pass); any other
+        /// index uses the WF default 0x102 (maxDeepSearch 3, maxSkipSearch 3).
+        /// The Avalonia combo is not populated with the WF hex strings, so this
+        /// keeps the two meaningful behaviours (off vs. on) without depending on
+        /// per-index strings. Documented approximation (#1113).
+        /// </summary>
+        uint DecodeAutoTrackLevel()
+        {
+            return AutoTrackingLevel == 0 ? 0u : 0x102u;
+        }
+
+        /// <summary>
+        /// Build <see cref="_otherRomAsmMap"/> from the cached target-ROM bytes
+        /// when it isn't already built. Reuses <see cref="_otherRomData"/> (no
+        /// double file read): detects the version from the in-memory header (the
+        /// same read <c>ROM.Load</c> does) and builds via <c>ROM.LoadLow</c>.
+        /// No-ops when the map already exists, no target bytes are cached, or the
+        /// buffer is too small. Tolerates version-detect failure (a ROM that does
+        /// not version-detect simply leaves the map null → name search disabled,
+        /// mirroring WF <c>LoadTargetROM</c>). Never throws.
+        /// </summary>
+        void EnsureTargetAsmMap()
+        {
+            if (_otherRomAsmMap != null) return;
+            if (_otherRomData == null || _otherRomData.Length < 0x100) return;
+
+            try
+            {
+                var targetRom = new ROM();
+                string version = U.getASCIIString(_otherRomData, U.toOffset(0x080000AC), 6);
+                if (targetRom.LoadLow(_otherRomFilename, _otherRomData, version))
+                {
+                    _otherRomAsmMap = new AsmMapSymbolFile(targetRom);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"PointerToolViewModel.EnsureTargetAsmMap: {ex}");
+            }
+        }
+
+        /// <summary>
+        /// (Re)build the cached source + target LDR literal-pool maps when missing
+        /// or stale (#1118 perf). DisassemblerTrumb.MakeLDRMap is a full-ROM scan;
+        /// caching avoids re-scanning both ROMs on every Auto Search click (the
+        /// hot path). The source map is tagged with the ROM instance it was built
+        /// for so a ROM reload (the editor can outlive a reload) rebuilds it.
+        /// Cheap when cached + ROM unchanged. Never throws (PointerToolAutoSearchCore.BuildLdrMap
+        /// falls back to an empty list on any fault).
+        /// </summary>
+        void EnsureLdrMaps(ROM sourceRom)
+        {
+            // Source map: rebuild only when missing or the source ROM changed.
+            if (_sourceLdrMap == null || !ReferenceEquals(_sourceLdrRom, sourceRom))
+            {
+                _sourceLdrMap = PointerToolAutoSearchCore.BuildLdrMap(sourceRom?.Data);
+                _sourceLdrRom = sourceRom;
+            }
+            EnsureTargetLdrMap();
+        }
+
+        /// <summary>
+        /// (Re)build the cached TARGET LDR literal-pool map from
+        /// <see cref="_otherRomData"/> when missing (#1118 perf). Invalidated
+        /// (nulled) on each LoadOtherRom so it tracks the current target. Cheap
+        /// when cached. Used by both the baseline <see cref="SearchOtherRom"/> LDR
+        /// lookup and the AutoSearch LDR-symmetry pass so neither re-scans the
+        /// whole target ROM per click. Never throws.
+        /// </summary>
+        void EnsureTargetLdrMap()
+        {
+            if (_targetLdrMap == null)
+            {
+                _targetLdrMap = PointerToolAutoSearchCore.BuildLdrMap(_otherRomData);
+            }
+        }
+
+        /// <summary>
+        /// Run the full cross-ROM AutoSearch (#1113). Resolves the current input
+        /// address against the loaded target ROM using three WF heuristics, in
+        /// order: ASM-map symbol NAME search, source↔target LDR-literal-pool
+        /// symmetry, and the auto-tracking retry (widen match window / slide).
+        /// Populates the OtherROM* fields from the accepted match and writes a
+        /// one-line <see cref="AutoSearchSummary"/>. Never throws.
+        /// </summary>
+        public void RunAutoSearch()
+        {
+            if (_otherRomData == null || _otherRomData.Length == 0)
+            {
+                // Clear any stale cross-ROM result so a previous successful match
+                // never lingers after the target ROM is gone (Copilot bot Fix 3).
+                ClearOtherRomFields();
+                AutoSearchSummary = "Load a target ROM first.";
+                return;
+            }
+            if (!TryParseAddress(out uint rawInput))
+            {
+                ClearOtherRomFields();
+                AutoSearchSummary = "Invalid address.";
+                return;
+            }
+            var rom = CoreState.ROM;
+            if (rom == null || rom.Data == null)
+            {
+                ClearOtherRomFields();
+                AutoSearchSummary = "No ROM loaded.";
+                return;
+            }
+
+            try
+            {
+                // Keep the baseline raw + LDR grep populated too (WF AutoSearch
+                // calls SearchCurrentROM/Search before the retry loop).
+                RunSearch();
+
+                // Lazily (re)build the target ASM/MAP symbol table when UseAsmMap
+                // is on but it wasn't built at load time (e.g. UseAsmMap was off
+                // during LoadOtherRom and the user re-enabled the checkbox). WF
+                // gates SearchASMMap at SEARCH time with the target map already
+                // available, so re-checking must re-enable name search on the
+                // CURRENT target. Reuses the cached bytes via EnsureTargetAsmMap
+                // (no double file read).
+                if (UseAsmMap)
+                {
+                    EnsureTargetAsmMap();
+                }
+
+                // Build the source ASM/MAP symbol table — ONLY when ASM-map search
+                // is enabled (WF gates name search on UseASMMAPCheckBox.Checked,
+                // Copilot bot Fix 5). When UseAsmMap is off, pass null for BOTH
+                // maps so the Core helper no-ops the name heuristic and only runs
+                // the LDR-symmetry + retry passes.
+                IAsmMapFile? sourceAsmMap = null;
+                if (UseAsmMap)
+                {
+                    // Prefer the cached per-ROM symbol table (same source LookupAddressType
+                    // uses) so repeated Auto Search clicks don't re-read/parse asmmap_*.txt
+                    // from disk each time (#1118 perf). Fall back to constructing a fresh
+                    // AsmMapSymbolFile only when the cache is unavailable (e.g. headless).
+                    try
+                    {
+                        sourceAsmMap = CoreState.AsmMapFileAsmCache?.GetAsmMapFile()
+                                       ?? new AsmMapSymbolFile(rom);
+                    }
+                    catch (Exception ex) { Log.Error($"PointerToolViewModel.RunAutoSearch source asmmap: {ex}"); }
+                }
+
+                // Capture the decoded level once and reuse it for both the
+                // AutoSearch arg and the not-found message wording.
+                uint trackLevel = DecodeAutoTrackLevel();
+
+                // Build/reuse the cached LDR maps (no full-ROM rescan on repeat
+                // clicks — #1118 perf) and pass them to the precomputed overload.
+                EnsureLdrMaps(rom);
+
+                AutoSearchResult result = PointerToolAutoSearchCore.AutoSearch(
+                    rom.Data,
+                    _otherRomData,
+                    rawInput,
+                    trackLevel,
+                    sourceAsmMap,
+                    UseAsmMap ? _otherRomAsmMap : null,
+                    WarningLevel,
+                    _sourceLdrMap,
+                    _targetLdrMap);
+
+                if (!result.Found)
+                {
+                    // No accepted match: clear the cross-ROM fields so a prior
+                    // RunSearch's baseline grep doesn't linger as a "result"
+                    // (Copilot bot Fix 4). The message reflects whether the retry
+                    // loop actually ran — trackLevel==0 is a single pass (no
+                    // auto-tracking), so don't claim "after auto-tracking retry".
+                    ClearOtherRomFields();
+                    AutoSearchSummary = trackLevel == 0
+                        ? "Not found."
+                        : "Not found after auto-tracking retry.";
+                    return;
+                }
+
+                // Populate ALL FOUR fields DETERMINISTICALLY: set to the hex
+                // string when the address resolved, ELSE clear to "" (Copilot bot
+                // Fix 4). A name hit has LdrAddr==NOT_FOUND, so this clears the
+                // LDR fields rather than showing the baseline RunSearch LDR grep.
+                OtherRomAddress       = result.DirectAddr != U.NOT_FOUND ? $"0x{result.DirectAddr:X08}" : "";
+                OtherRomRefPointer    = result.DirectRef  != U.NOT_FOUND ? $"0x{result.DirectRef:X08}"  : "";
+                OtherRomLdrAddress    = result.LdrAddr    != U.NOT_FOUND ? $"0x{result.LdrAddr:X08}"    : "";
+                OtherRomLdrRefPointer = result.LdrRef     != U.NOT_FOUND ? $"0x{result.LdrRef:X08}"     : "";
+
+                // Set the four warning flags DETERMINISTICALLY from the accepted
+                // result so they never show stale baseline-RunSearch values
+                // (Copilot bot Fix B). They MIRROR the address fields: a cleared
+                // address has no warning; a found address is evaluated via the
+                // same EvaluateOtherRomWarning helper SearchOtherRom uses (it
+                // takes a ROM OFFSET in the other-ROM buffer, so convert the GBA
+                // pointer with U.toOffset). E.g. a "name" hit clears the LDR
+                // address fields, so HasZeroAtLdr / HasVeryFarAtLdr go false too.
+                if (result.DirectAddr != U.NOT_FOUND)
+                {
+                    HasZeroAtDirect = EvaluateOtherRomWarning(U.toOffset(result.DirectAddr), out bool directFar);
+                    HasVeryFarAtDirect = directFar;
+                }
+                else { HasZeroAtDirect = false; HasVeryFarAtDirect = false; }
+
+                if (result.LdrAddr != U.NOT_FOUND)
+                {
+                    HasZeroAtLdr = EvaluateOtherRomWarning(U.toOffset(result.LdrAddr), out bool ldrFar);
+                    HasVeryFarAtLdr = ldrFar;
+                }
+                else { HasZeroAtLdr = false; HasVeryFarAtLdr = false; }
+
+                string sym = (result.Hit == "name" && result.SymbolName.Length > 0)
+                    ? $" ({result.SymbolName})"
+                    : "";
+                AutoSearchSummary =
+                    $"Matched via {result.Hit}{sym}: direct=0x{result.DirectAddr:X08}, ldr=0x{result.LdrAddr:X08}";
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"PointerToolViewModel.RunAutoSearch: {ex}");
+                AutoSearchSummary = "AutoSearch failed (see log).";
+            }
+        }
+
+        /// <summary>
+        /// Screenshot-mode seeding hook (#966). The offscreen
+        /// <c>--screenshot-all</c> harness has no file picker, so it cannot
+        /// exercise <see cref="LoadOtherRom"/> normally — the OtherROM* fields
+        /// would render empty. This helper seeds a representative cross-ROM
+        /// state for the PNG by using the CURRENT ROM's own bytes as the "other
+        /// ROM" and picking a real referenced address: it scans the live ROM for
+        /// the first 4-byte-aligned pointer, derefs it to a data address that is
+        /// guaranteed to have at least one raw reference, sets that as the input
+        /// address, and runs the normal search so the raw OtherROM fields
+        /// populate with genuine values. ONLY invoked from the screenshot path
+        /// (gated by <c>App.ScreenshotAllMode</c> in the view's
+        /// <c>SelectFirstItem</c>); the interactive runtime path is unchanged.
+        /// </summary>
+        /// <returns>True when a demo state was seeded; false when no ROM /
+        /// no referenced address was available.</returns>
+        public bool SeedDemoCrossRom()
+        {
+            var rom = CoreState.ROM;
+            if (rom == null || rom.Data == null || rom.Data.Length < 0x400) return false;
+
+            // Find a data address that is referenced by at least one pointer in
+            // the live ROM. The simplest guaranteed-referenced address is the
+            // target of the first valid pointer we can find: if offset R holds a
+            // pointer to offset T, then T is referenced at R. We then search the
+            // (current-ROM == other-ROM) buffer for references to T, which finds
+            // at least R.
+            uint targetOffset = 0;
+            for (uint i = 0x200; i + 3 < (uint)rom.Data.Length; i += 4)
+            {
+                uint v = rom.u32(i);
+                if (v >= 0x08000000 && v < 0x0A000000)
+                {
+                    uint off = v - 0x08000000;
+                    // Must be a plausible, in-bounds, non-danger-zone target so
+                    // the search produces a populated field.
+                    if (off >= 0x200 && off + 3 < (uint)rom.Data.Length)
+                    {
+                        targetOffset = off;
+                        break;
+                    }
+                }
+            }
+            if (targetOffset == 0) return false;
+
+            // Use the current ROM bytes as the "other ROM" for the demo so the
+            // cross-ROM grep finds the same references. This is screenshot-only.
+            _otherRomData = rom.Data;
+            _otherRomFilename = rom.Filename ?? "(current ROM)";
+            OtherRomName = $"{Path.GetFileNameWithoutExtension(_otherRomFilename)} (demo)";
+
+            // Seed the target ASM/MAP symbol table from the same (current) ROM so
+            // the AutoSearch summary line renders in the captured PNG (#1113).
+            // Screenshot-only / never-throw.
+            try { _otherRomAsmMap = new AsmMapSymbolFile(rom); }
+            catch { _otherRomAsmMap = null; }
+
+            AddressInput = $"0x{targetOffset:X08}";
+            RunSearch();
+            // Run the full cross-ROM AutoSearch so AutoSearchSummary populates.
+            try { RunAutoSearch(); } catch { /* screenshot seed must never throw */ }
+            return true;
+        }
+
+        /// <summary>
+        /// Mirror of WF <c>PointerToolForm.WhatIsButton_Click</c> (#1026).
+        /// Returns a human-readable hint describing the address: the region
+        /// class (ROM / EWRAM / IWRAM / unknown) PLUS, when the loaded ASM/MAP
+        /// symbol table resolves the address, the nearest symbol name.
+        ///
+        /// <para>The symbol lookup queries
+        /// <c>CoreState.AsmMapFileAsmCache.GetAsmMapFile()</c> (the
+        /// cross-platform <see cref="AsmMapSymbolFile"/> built by
+        /// <see cref="CoreAsmMapCache"/>, or the full WF <c>AsmMapFile</c> when
+        /// run under WinForms). On an EXACT pointer match it appends
+        /// <c>p.ToStringInfo()</c>; otherwise it walks <c>SearchNear</c> and, if
+        /// the address falls inside the nearest symbol's span, appends
+        /// "<c>base+offset(0xHEX) name</c>" — verbatim WF
+        /// <c>WhatIsButton_Click</c> formatting.</para>
+        ///
+        /// <para>Null-safe: with no cache or no symbol map (headless / empty
+        /// ASM-map) it returns the region hint only and never throws. This method
+        /// covers the single-ROM "What is this address?" symbol-name resolution;
+        /// the cross-ROM AutoSearch heuristics (auto-tracking retry, source/target
+        /// LDR-map symmetry, ASM-map name search) live in
+        /// <see cref="RunAutoSearch"/> (#1113).</para>
         /// </summary>
         public string LookupAddressType(uint addr)
         {
-            // Classify the address according to WF's runtime semantics:
-            // - GBA pointer (0x08xxxxxx): is_ROMPointer.
-            // - Small numeric (< 0xA00): is_RAMPointer or constant.
-            // - 0x02000000 / 0x03000000 RAM regions.
-            //
-            // The output mirrors what WF shows in the "address type" message
-            // box. When the asm-map surface lands in Core (follow-up), this
-            // method gains the SearchNear path.
+            // WF: pointer = U.toPointer(addr); addr = U.toOffset(addr).
             uint pointer = U.toPointer(addr);
+            uint offsetAddr = U.toOffset(addr);
+
             string regionHint;
             if (U.isPointer(pointer))
             {
@@ -436,9 +949,86 @@ namespace FEBuilderGBA.Avalonia.ViewModels
                 regionHint = "unknown region";
             }
 
-            string result = $"Address 0x{addr:X08} (pointer 0x{pointer:X08}): {regionHint}.";
+            // Resolve the nearest ASM/MAP symbol name (mirrors WF
+            // PointerToolForm.WhatIsButton_Click). Null-safe at every step.
+            string symbol = "";
+            try
+            {
+                var cache = CoreState.AsmMapFileAsmCache;
+                var asmMap = cache?.GetAsmMapFile();
+                if (asmMap != null)
+                {
+                    if (asmMap.TryGetValue(pointer, out var p) && p != null)
+                    {
+                        symbol = p.ToStringInfo();
+                    }
+                    else
+                    {
+                        uint near = asmMap.SearchNear(pointer);
+                        if (near != U.NOT_FOUND
+                            && asmMap.TryGetValue(near, out p)
+                            && p != null
+                            && pointer < (ulong)near + p.Length)
+                        {
+                            uint off = pointer - near;
+                            symbol = $"{U.To0xHexString(U.toOffset(near))}+{off}(0x{off:X}) {p.ToStringInfo()}";
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // A symbol lookup must never crash the UI thread. Log and fall
+                // back to the region hint only.
+                Log.Error($"PointerToolViewModel.LookupAddressType: {ex}");
+                symbol = "";
+            }
+
+            string result = $"Address 0x{offsetAddr:X08} (pointer 0x{pointer:X08}): {regionHint}.";
+            if (symbol.Length > 0)
+            {
+                result += $" Symbol: {symbol}";
+            }
             SearchResults = result;
             return result;
+        }
+
+        /// <summary>
+        /// Screenshot-mode seed (#1026): run LookupAddressType on a known
+        /// ASM/MAP-symbol address so the captured PNG shows a resolved symbol
+        /// name. Picks the FIRST symbol the loaded asmmap exposes (via the
+        /// symbol map's smallest key) so it works on any version; falls back to
+        /// the seeded cross-ROM address when no symbol map / no symbol.
+        /// ONLY call from the --screenshot-all path.
+        /// </summary>
+        public void SeedDemoWhatIs()
+        {
+            try
+            {
+                var asmMap = CoreState.AsmMapFileAsmCache?.GetAsmMapFile();
+                // #1130: in decomp mode GetAsmMapFile() returns a MergedAsmMapFile;
+                // both it and the shipped AsmMapSymbolFile expose FirstKeyForScreenshot().
+                uint firstKey = U.NOT_FOUND;
+                if (asmMap is AsmMapSymbolFile sym)
+                {
+                    firstKey = sym.FirstKeyForScreenshot();   // smallest key
+                }
+                else if (asmMap is MergedAsmMapFile merged)
+                {
+                    firstKey = merged.FirstKeyForScreenshot();
+                }
+                if (firstKey != U.NOT_FOUND)
+                {
+                    AddressInput = $"0x{firstKey:X08}";
+                    LookupAddressType(firstKey);
+                    return;
+                }
+                // Fallback: describe whatever address SeedDemoCrossRom seeded.
+                if (uint.TryParse((AddressInput ?? "").Replace("0x", "").Trim(),
+                        System.Globalization.NumberStyles.HexNumber, null, out uint a))
+                    LookupAddressType(a);
+            }
+            catch { /* screenshot seed must never throw */ }
         }
     }
 }

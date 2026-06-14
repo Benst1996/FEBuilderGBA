@@ -439,6 +439,648 @@ namespace FEBuilderGBA
             return image;
         }
 
+        // -----------------------------------------------------------------
+        // Sample-preview helpers (#822) — the cross-platform port of the
+        // WinForms ImageBattleAnimePalletForm.DrawSample 12-frame grid +
+        // SCALE_90 crop + IsBlankBitmap blank-check + section/frame advance.
+        // -----------------------------------------------------------------
+
+        /// <summary>Cropped sample cell size — mirrors WF SCALE_90 (90x90).</summary>
+        public const int SampleCellSize = 90;
+        /// <summary>Crop window source X — mirrors WF BitBlt(... , bitmap, 100, 30).</summary>
+        public const int SampleCropSrcX = 100;
+        /// <summary>Crop window source Y — mirrors WF BitBlt(... , bitmap, 100, 30).</summary>
+        public const int SampleCropSrcY = 30;
+        /// <summary>Number of sample cells — mirrors WF DrawSample's Bitmap[12].</summary>
+        public const int SampleFrameCount = 12;
+        /// <summary>Composite grid width — mirrors WF Blank(360, 290).</summary>
+        public const int SampleGridWidth = 360;
+        /// <summary>Composite grid height — mirrors WF Blank(360, 290).</summary>
+        public const int SampleGridHeight = 290;
+
+        /// <summary>
+        /// Copy a rectangular <paramref name="w"/>x<paramref name="h"/> window
+        /// starting at source pixel (<paramref name="srcX"/>, <paramref name="srcY"/>)
+        /// out of <paramref name="src"/> into a fresh RGBA image. Out-of-bounds
+        /// source pixels are left transparent (RGBA 0,0,0,0).
+        ///
+        /// <para>This is the cross-platform equivalent of WinForms
+        /// <c>ImageBattleAnimeForm.DrawBattleAnime</c>'s SCALE_90 branch:
+        /// <c>Blank(90,90)</c> + <c>BitBlt(trim, 0,0, 90,90, bitmap, 100, 30)</c>
+        /// — i.e. a CROP of the (100,30)..(190,120) window, NOT a scale.</para>
+        /// </summary>
+        /// <param name="src">Source RGBA image.</param>
+        /// <param name="srcX">Source window X origin.</param>
+        /// <param name="srcY">Source window Y origin.</param>
+        /// <param name="w">Crop width.</param>
+        /// <param name="h">Crop height.</param>
+        /// <returns>A fresh <paramref name="w"/>x<paramref name="h"/> RGBA image, or null on failure.</returns>
+        public static IImage CropImage(IImage src, int srcX, int srcY, int w, int h)
+        {
+            IImageService svc = CoreState.ImageService;
+            if (svc == null || src == null || w <= 0 || h <= 0)
+                return null;
+
+            byte[] srcPixels = src.GetPixelData();
+            if (srcPixels == null)
+                return null;
+
+            int srcW = src.Width;
+            int srcH = src.Height;
+            byte[] outPixels = new byte[w * h * 4]; // RGBA, zero-filled = transparent
+
+            for (int y = 0; y < h; y++)
+            {
+                int sy = srcY + y;
+                if (sy < 0 || sy >= srcH) continue;
+                for (int x = 0; x < w; x++)
+                {
+                    int sx = srcX + x;
+                    if (sx < 0 || sx >= srcW) continue;
+
+                    int si = (sy * srcW + sx) * 4;
+                    if (si + 3 >= srcPixels.Length) continue;
+
+                    int di = (y * w + x) * 4;
+                    outPixels[di + 0] = srcPixels[si + 0];
+                    outPixels[di + 1] = srcPixels[si + 1];
+                    outPixels[di + 2] = srcPixels[si + 2];
+                    outPixels[di + 3] = srcPixels[si + 3];
+                }
+            }
+
+            var image = svc.CreateImage(w, h);
+            image.SetPixelData(outPixels);
+            return image;
+        }
+
+        /// <summary>
+        /// Return true when <paramref name="img"/> has at most
+        /// <paramref name="threshold"/> non-transparent pixels.
+        ///
+        /// <para>Cross-platform mirror of WinForms
+        /// <c>ImageUtil.IsBlankBitmap(bmp, emptySize)</c>: WF iterates the
+        /// 8bpp indexed bitmap and counts pixels whose palette index byte is
+        /// <c>&gt; 0</c> (index 0 = transparent), returning
+        /// <c>dotCount &lt;= emptySize</c>. Here the equivalent is the RGBA
+        /// alpha channel: <c>RenderSingleFrame</c> writes alpha 0 for color
+        /// index 0 and alpha 255 otherwise, so "alpha &gt; 0" == "index &gt; 0".
+        /// The default threshold of 10 matches WF's <c>DrawSample</c> call
+        /// (<c>IsBlankBitmap(animeframe[index], 10)</c>).</para>
+        /// </summary>
+        /// <param name="img">Image to test (RGBA).</param>
+        /// <param name="threshold">Max non-transparent pixel count to still count as blank.</param>
+        /// <returns>True if the image is effectively blank.</returns>
+        public static bool IsBlankImage(IImage img, int threshold = 10)
+        {
+            if (img == null) return true;
+            byte[] pixels = img.GetPixelData();
+            if (pixels == null) return true;
+
+            int dotCount = 0;
+            // RGBA: alpha at index 3 of every 4-byte group.
+            for (int i = 3; i < pixels.Length; i += 4)
+            {
+                if (pixels[i] > 0)
+                {
+                    dotCount++;
+                    if (dotCount > threshold) return false;
+                }
+            }
+            return dotCount <= threshold;
+        }
+
+        /// <summary>
+        /// Render the 12-frame battle-animation sample-preview grid for the
+        /// 32-byte animation record at <paramref name="animeRecordAddr"/>,
+        /// recolored with the <paramref name="paletteIndex"/>-th 16-color
+        /// sub-palette. Mirrors WinForms
+        /// <c>ImageBattleAnimePalletForm.DrawSample(battleAnimeID, paletteIndex)</c>.
+        ///
+        /// <para><b>Record resolution.</b> <paramref name="animeRecordAddr"/>
+        /// is the ROM offset of the record itself (NOT a 1-based anime id — the
+        /// caller already resolved <c>baseAddr + i*0x20</c>, so there is no WF
+        /// <c>id-1</c> conversion here). Pointer/offset conventions mirror
+        /// <c>ImageBattleAnimeViewModel.InitFrameNavigation</c> exactly:
+        /// section <c>u32(rec+12)</c> → OFFSET (<c>U.toOffset</c>, fed to
+        /// <see cref="GetSectionRange"/>); frame <c>u32(rec+16)</c> → POINTER
+        /// (passed raw to <see cref="DecompressFrameData"/>, which
+        /// <c>toOffset</c>s internally); OAM <c>u32(rec+20)</c> → POINTER
+        /// (→ offset → LZ77); palette <c>u32(rec+0x1C)</c> → POINTER
+        /// (→ offset → LZ77).</para>
+        ///
+        /// <para><b>Palette.</b> The palette block is LZ77-compressed; this
+        /// decompresses it and slices the <c>paletteIndex*0x20</c> 16-color
+        /// block (guarding length, falling back to block 0) — the
+        /// cross-platform equivalent of WF <c>ImageUtil.SwapPalette</c>.</para>
+        ///
+        /// <para><b>Per-cell.</b> Each frame is rendered via
+        /// <see cref="RenderSingleFrame"/> (240x160), then cropped to 90x90 at
+        /// source (100,30) via <see cref="CropImage"/> (WF SCALE_90), then
+        /// blank-checked via <see cref="IsBlankImage"/> on the CROP. A single
+        /// section/frame cursor PERSISTS across all 12 cells (advanced section
+        /// carries forward — mirrors WF declaring <c>showsecstion</c>/
+        /// <c>showframe</c> outside the loop). On a blank crop the advance order
+        /// is WF's exact one: <c>frame += 2</c>, then on a still-blank crop
+        /// <c>section += 1; frame = 0</c> (twice).</para>
+        ///
+        /// <para>Null-safe: returns null on null ROM / null ImageService /
+        /// unresolvable record / no non-blank frame.</para>
+        /// </summary>
+        /// <param name="animeRecordAddr">ROM offset of the 32-byte animation record.</param>
+        /// <param name="paletteIndex">Sub-palette (palette-type) index: 0=Player, 1=Enemy, 2=Other, 3=4th.</param>
+        /// <returns>A 360x290 composite IImage, or null on failure.</returns>
+        public static IImage RenderSampleBattleAnime(uint animeRecordAddr, int paletteIndex)
+            => RenderSampleBattleAnime(animeRecordAddr, paletteIndex, 0);
+
+        /// <summary>
+        /// Palette-override overload of <see cref="RenderSampleBattleAnime(uint,int)"/>.
+        /// When <paramref name="paletteOverrideAddr"/> is non-zero, the 12-cell
+        /// grid is rendered with the palette block at THAT address (a GBA pointer
+        /// to the LZ77-compressed UNIT palette) instead of the animation record's
+        /// own palette at <c>rec+0x1C</c> — the cross-platform mirror of WinForms
+        /// <c>ImageBattleAnimeForm.DrawBattleAnime</c>'s
+        /// <c>custompalette&gt;0 → palettes = ImageUnitPaletteForm.GetPaletteAddr(custompalette)</c>
+        /// override (<c>ImageBattleAnimeForm.cs:285-293</c>). The
+        /// <paramref name="paletteIndex"/> sub-palette slice is still applied on
+        /// top (the two are independent: the override picks the unit-palette
+        /// BLOCK / custompalette slot; <paramref name="paletteIndex"/> picks the
+        /// enemy/ally SUB-palette within that block, like WF <c>SwapPalette</c>).
+        /// When <paramref name="paletteOverrideAddr"/> is 0 the behaviour is
+        /// identical to the existing #822 path (the record's own palette).
+        /// </summary>
+        /// <param name="animeRecordAddr">ROM offset of the 32-byte animation record.</param>
+        /// <param name="paletteIndex">Sub-palette (palette-type) index: 0=Player, 1=Enemy, 2=Other, 3=4th.</param>
+        /// <param name="paletteOverrideAddr">GBA pointer to the override palette
+        /// block (the unit palette). 0 = use the record's own <c>rec+0x1C</c> palette.</param>
+        /// <param name="overridePaletteBlock">Optional EXACT 32-byte (16-color
+        /// little-endian RGB555) palette block — the live-edited sub-palette from
+        /// the Unit Palette editor's in-memory R/G/B spinners (#1022). When non-null
+        /// AND exactly 32 bytes long, it is used as the rendered palette DIRECTLY,
+        /// bypassing all ROM palette resolution (LZ77 decompress + sub-palette
+        /// slice). This is the cross-platform mirror of WinForms
+        /// <c>ImageUnitPaletteForm.OnChangeColor</c> (ImageUnitPaletteForm.cs:321-333),
+        /// which live-recolors the sample preview as the user edits colors. When
+        /// null OR not exactly 32 bytes long, behaviour falls back BYTE-IDENTICALLY
+        /// to <see cref="ResolveSamplePaletteBlock"/> (so the
+        /// <paramref name="paletteOverrideAddr"/> / record-own resolution is
+        /// unchanged for the existing 3-arg callers, which pass null).</param>
+        /// <returns>A 360x290 composite IImage, or null on failure.</returns>
+        public static IImage RenderSampleBattleAnime(uint animeRecordAddr, int paletteIndex,
+            uint paletteOverrideAddr, byte[] overridePaletteBlock = null)
+        {
+            ROM rom = CoreState.ROM;
+            IImageService svc = CoreState.ImageService;
+            if (rom == null || svc == null) return null;
+            if (animeRecordAddr + 32 > (uint)rom.Data.Length) return null;
+            if (paletteIndex < 0) paletteIndex = 0;
+
+            // --- Resolve the record's pointers (mirror InitFrameNavigation) ---
+            uint sectionRaw = rom.u32(animeRecordAddr + 12);
+            uint frameRaw   = rom.u32(animeRecordAddr + 16);
+            uint oamRtLRaw  = rom.u32(animeRecordAddr + 20);
+            uint paletteRaw = rom.u32(animeRecordAddr + 28);
+
+            // Palette source: the UNIT-palette override (custompalette) when
+            // supplied AND it points somewhere safe, else the record's own
+            // palette. Mirrors WF: `if (custompalette>0) { p = GetPaletteAddr(...);
+            // if (U.isSafetyOffset(addr)) palettes = p; }` — the override only
+            // takes effect for a safety-valid record (which the early bound check
+            // above already guaranteed) and a safety-valid override block.
+            //
+            // The override may arrive as either a raw GBA POINTER (0x08...) or an
+            // OFFSET (as GetUnitPaletteAddr/p32 returns, < 0x08000000). Normalize
+            // to an offset for the safety check, then feed it to
+            // ResolveSamplePaletteBlock in POINTER form (which the helper toOffsets
+            // again — same convention as the record's own rec+0x1C pointer).
+            uint effectivePaletteRaw = paletteRaw;
+            if (paletteOverrideAddr != 0)
+            {
+                uint overrideOffset = U.toOffset(paletteOverrideAddr);
+                if (U.isSafetyOffset(overrideOffset, rom))
+                {
+                    effectivePaletteRaw = U.toPointer(overrideOffset);
+                }
+            }
+
+            // Section data is raw (not compressed) at the pointer address.
+            if (!U.isPointer(sectionRaw)) return null;
+            uint sectionOffset = U.toOffset(sectionRaw);
+            if (!U.isSafetyOffset(sectionOffset, rom)) return null;
+
+            // Frame command stream (LZ77 or un-Huffman patch pointer).
+            byte[] frameData = DecompressFrameData(rom, frameRaw);
+            if (frameData == null || frameData.Length == 0) return null;
+
+            // OAM data (LZ77-compressed).
+            byte[] oamData = null;
+            if (U.isPointer(oamRtLRaw))
+            {
+                uint oamOff = U.toOffset(oamRtLRaw);
+                if (U.isSafetyOffset(oamOff, rom))
+                    oamData = LZ77.decompress(rom.Data, oamOff);
+            }
+            if (oamData == null) return null;
+
+            // Palette: the live-edited in-memory block (#1022) takes priority when
+            // an EXACT 32-byte override is supplied — used as the palette DIRECTLY,
+            // bypassing all ROM resolution (the WF OnChangeColor live-recolor). Any
+            // null / non-32-byte value falls back byte-identically to the saved
+            // path (LZ77-decompress `effectivePaletteRaw` then slice the
+            // paletteIndex-th 16-color block; `effectivePaletteRaw` is the
+            // unit-palette override when one was supplied, otherwise the record's
+            // own palette).
+            byte[] paletteSubBytes =
+                (overridePaletteBlock != null && overridePaletteBlock.Length == 32)
+                    ? overridePaletteBlock
+                    : ResolveSamplePaletteBlock(rom, effectivePaletteRaw, paletteIndex);
+            if (paletteSubBytes == null) return null;
+
+            // --- Collect 12 cropped 90x90 cells (mirror DrawSample) ---
+            // The cursor PERSISTS across cells: an advanced section/frame carries
+            // forward into the next cell (WF declares these outside the loop).
+            //
+            // IImage is IDisposable (Skia-backed native bitmaps), so every
+            // intermediate cell MUST be disposed: a blank-retry overwrite
+            // disposes the previous crop, and after the grid is composed (or on
+            // the no-content path) all cells are disposed in `finally`. The
+            // full 240x160 frame each cell came from is disposed inside
+            // RenderSampleCell right after the crop. Only the RETURNED grid
+            // survives (the caller owns it).
+            var cells = new IImage[SampleFrameCount];
+            try
+            {
+                int section = 0;
+                int frame = 0;
+                for (int index = 0; index < SampleFrameCount; index++, frame += 2)
+                {
+                    SetCell(cells, index, RenderSampleCell(rom, frameData, oamData,
+                        paletteSubBytes, sectionOffset, section, frame));
+                    if (!IsBlankImage(cells[index], 10))
+                    {
+                        continue;
+                    }
+                    // Blank: advance the frame a bit and retry (disposes the
+                    // previous blank crop before overwriting).
+                    frame += 2;
+                    SetCell(cells, index, RenderSampleCell(rom, frameData, oamData,
+                        paletteSubBytes, sectionOffset, section, frame));
+                    if (!IsBlankImage(cells[index], 10))
+                    {
+                        continue;
+                    }
+                    // Still blank: switch to the next section (reset frame).
+                    section += 1;
+                    frame = 0;
+                    SetCell(cells, index, RenderSampleCell(rom, frameData, oamData,
+                        paletteSubBytes, sectionOffset, section, frame));
+                    if (!IsBlankImage(cells[index], 10))
+                    {
+                        continue;
+                    }
+                    // Still blank: advance one more section, then give up for this cell.
+                    section += 1;
+                    frame = 0;
+                    SetCell(cells, index, RenderSampleCell(rom, frameData, oamData,
+                        paletteSubBytes, sectionOffset, section, frame));
+                }
+
+                // If every cell came back null/blank, there is nothing to
+                // preview. The `finally` disposes the (blank) cells.
+                bool anyContent = false;
+                for (int i = 0; i < cells.Length; i++)
+                {
+                    if (cells[i] != null && !IsBlankImage(cells[i], 10)) { anyContent = true; break; }
+                }
+                if (!anyContent) return null;
+
+                // --- Compose the cells into the 4-col x 3-row 360x290 grid ---
+                byte[] gridPixels = new byte[SampleGridWidth * SampleGridHeight * 4]; // RGBA
+                int gx = 0;
+                int gy = 0;
+                for (int index = 0; index < cells.Length; index++)
+                {
+                    BlitCellIntoGrid(cells[index], gridPixels, SampleGridWidth, SampleGridHeight, gx, gy);
+                    gx += SampleCellSize;
+                    if (gx >= SampleGridWidth)
+                    {
+                        gx = 0;
+                        gy += SampleCellSize;
+                    }
+                }
+
+                var grid = svc.CreateImage(SampleGridWidth, SampleGridHeight);
+                grid.SetPixelData(gridPixels);
+                return grid; // caller owns the grid — NOT disposed here.
+            }
+            finally
+            {
+                // BlitCellIntoGrid copied each cell's pixels into the grid, so
+                // the cell intermediates are safe to dispose now (also covers
+                // the no-content early return). The returned grid is a separate
+                // image created above and is never placed in `cells`.
+                for (int i = 0; i < cells.Length; i++)
+                {
+                    DisposeImage(cells[i]);
+                    cells[i] = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Assign <paramref name="value"/> to <c>cells[index]</c>, disposing any
+        /// image already there first (a blank-retry overwrite). Null-safe.
+        /// </summary>
+        static void SetCell(IImage[] cells, int index, IImage value)
+        {
+            if (!ReferenceEquals(cells[index], value))
+            {
+                DisposeImage(cells[index]);
+            }
+            cells[index] = value;
+        }
+
+        /// <summary>Null-safe, exception-swallowing dispose for an IImage.</summary>
+        static void DisposeImage(IImage img)
+        {
+            if (img is IDisposable d)
+            {
+                try { d.Dispose(); } catch { /* double-dispose / already-disposed: ignore */ }
+            }
+        }
+
+        /// <summary>
+        /// Resolve the UNIT-palette address for unit-palette slot
+        /// <paramref name="paletteno"/> (1-based). Cross-platform mirror of
+        /// WinForms <c>ImageUnitPaletteForm.GetPaletteAddr(paletteid)</c>
+        /// (<c>ImageUnitPaletteForm.cs:115-130</c>):
+        /// <c>p32(IDToAddr(paletteno-1) + 12)</c>, where the unit-palette table
+        /// base is <c>p32(RomInfo.image_unit_palette_pointer)</c> and each entry
+        /// is 16 bytes (<c>IDToAddr(id) = base + id*16</c>). This is resolved via
+        /// Core <c>RomInfo</c>, NOT the WinForms-coupled <c>InputFormRef.IDToAddr</c>.
+        /// Returns <see cref="U.NOT_FOUND"/> for <paramref name="paletteno"/> &lt;= 0
+        /// or an unsafe resolved address (the WF <c>U.isSafetyOffset</c> guard).
+        /// </summary>
+        /// <param name="rom">The active ROM.</param>
+        /// <param name="paletteno">1-based unit-palette slot (WF
+        /// <c>AddressList.SelectedIndex + 1</c>).</param>
+        /// <returns>The unit-palette block's ROM OFFSET (the read goes through
+        /// <c>rom.p32</c>, which applies <c>U.toOffset</c> — callers must NOT
+        /// double-convert), or <see cref="U.NOT_FOUND"/>.</returns>
+        public static uint GetUnitPaletteAddr(ROM rom, int paletteno)
+        {
+            if (rom == null || rom.RomInfo == null) return U.NOT_FOUND;
+            if (paletteno <= 0) return U.NOT_FOUND;
+
+            uint tablePointer = rom.RomInfo.image_unit_palette_pointer;
+            if (tablePointer == 0) return U.NOT_FOUND;
+            // rom.p32 reads 4 bytes — guard the full span before the read so a
+            // table pointer near EOF cannot throw. image_unit_palette_pointer is
+            // a fixed RomInfo header-region location (may be < 0x200), so we do
+            // NOT apply the isSafetyOffset lower-bound here — only the EOF bound,
+            // matching the original direct rom.p32(tablePointer) read.
+            if ((ulong)tablePointer + 4 > (ulong)rom.Data.Length) return U.NOT_FOUND;
+            uint baseAddr = rom.p32(tablePointer);
+            if (!U.isSafetyOffset(baseAddr, rom)) return U.NOT_FOUND;
+
+            // IDToAddr(paletteno - 1): table base + (paletteno-1) * 16-byte stride.
+            const uint EntrySize = 16;
+            uint entryAddr = baseAddr + (uint)(paletteno - 1) * EntrySize;
+            // The +12 pointer slot must itself stay in-bounds + safety-valid.
+            uint slot = entryAddr + 12;
+            if (!U.isSafetyOffset(slot, rom)) return U.NOT_FOUND;
+            if ((ulong)slot + 4 > (ulong)rom.Data.Length) return U.NOT_FOUND;
+            return rom.p32(slot);
+        }
+
+        /// <summary>
+        /// Decompress the anime palette block and slice the
+        /// <paramref name="paletteIndex"/>-th 16-color (32-byte) sub-palette.
+        /// Falls back to block 0 when the requested block is out of range.
+        /// Returns null on null/invalid palette pointer or decompress failure.
+        /// </summary>
+        static byte[] ResolveSamplePaletteBlock(ROM rom, uint paletteRaw, int paletteIndex)
+        {
+            if (!U.isPointer(paletteRaw)) return null;
+            uint palOff = U.toOffset(paletteRaw);
+            if (!U.isSafetyOffset(palOff, rom)) return null;
+
+            byte[] decompressed = LZ77.decompress(rom.Data, palOff);
+            if (decompressed == null || decompressed.Length < 32) return null;
+
+            const int blockBytes = 32; // 16 colors * 2 bytes
+            int start = paletteIndex * blockBytes;
+            if (start < 0 || start + blockBytes > decompressed.Length)
+            {
+                start = 0; // length guard → fall back to block 0
+            }
+
+            byte[] sub = new byte[blockBytes];
+            Array.Copy(decompressed, start, sub, 0, blockBytes);
+            return sub;
+        }
+
+        /// <summary>
+        /// Render one sample cell: resolve the (section, frameIndex) frame in the
+        /// decompressed frame stream, render it via <see cref="RenderSingleFrame"/>,
+        /// then crop to 90x90 at source (100,30) (WF SCALE_90). Returns a blank
+        /// 90x90 cell when the frame index does not exist in the section (WF
+        /// returns a blank bitmap in that case, which the caller's blank-check
+        /// then advances past).
+        /// </summary>
+        static IImage RenderSampleCell(ROM rom, byte[] frameData, byte[] oamData,
+            byte[] paletteSubBytes, uint sectionOffset, int section, int frameIndex)
+        {
+            // Out-of-range section → blank cell (WF FindFrame would return NOT_FOUND).
+            if (section < 0 || section >= SECTION_COUNT)
+                return BlankSampleCell();
+
+            GetSectionRange(section, sectionOffset, (uint)frameData.Length, rom,
+                out uint start, out uint end);
+
+            List<FrameInfo> frames = ParseFramesInRange(frameData, start, end);
+            if (frames == null || frameIndex < 0 || frameIndex >= frames.Count)
+                return BlankSampleCell();
+
+            IImage full = RenderSingleFrame(frames[frameIndex], oamData, paletteSubBytes);
+            if (full == null)
+                return BlankSampleCell();
+
+            // Crop to the 90x90 SCALE_90 window, then dispose the 240x160 full
+            // frame intermediate (its pixels were copied into the crop).
+            IImage crop = CropImage(full, SampleCropSrcX, SampleCropSrcY,
+                SampleCellSize, SampleCellSize);
+            DisposeImage(full);
+            return crop ?? BlankSampleCell();
+        }
+
+        /// <summary>
+        /// Walk the OAM entry list at <paramref name="oamStart"/> using the SAME
+        /// parse loop + terminators as <see cref="DrawOAMSprites"/> and return the
+        /// maximum 16-color palette-bank selector (<c>(oam[pos+5]&gt;&gt;4)&amp;0xF</c>)
+        /// among the NON-affine sprite entries, skipping bug-frame banks &gt;= 4.
+        /// Affine sprites are excluded because the WinForms affine draw path
+        /// (<c>ImageUtilOAM.Draw</c>, the affine <c>BitBlt</c>) renders them with
+        /// palette shift 0, so they never contribute a bank to WF's
+        /// <c>GetPalette16Count(DrawBitmap)</c>. Returns 0 when no qualifying entry
+        /// has a usable bank.
+        /// </summary>
+        internal static int MaxOamPaletteBank(byte[] oamData, uint oamStart)
+        {
+            if (oamData == null || oamStart >= (uint)oamData.Length) return 0;
+            int maxBank = 0;
+            for (uint pos = oamStart; ; pos += 12)
+            {
+                if (pos + 12 > (uint)oamData.Length) break;
+
+                byte firstByte = oamData[pos];
+
+                // FEditor serialized alternate terminator (00 FF FF FF).
+                if (firstByte == 0 && oamData[pos + 1] == 0xFF
+                    && oamData[pos + 2] == 0xFF && oamData[pos + 3] == 0xFF)
+                    break;
+
+                // Affine MATRIX entry ([2..3]==FFFF): not a sprite — keep walking.
+                if (oamData[pos + 2] == 0xFF && oamData[pos + 3] == 0xFF)
+                    continue;
+
+                // Normal terminator.
+                if (firstByte == 0x01) break;
+
+                // First byte must be 0x00 for a normal OAM sprite entry.
+                if (firstByte != 0x00) break;
+
+                // Affine SPRITE (align bit0 set): WF renders with palette shift 0
+                // (excluded from the bank count). align is byte[pos+1].
+                bool isAffineSprite = (oamData[pos + 1] & 0x01) != 0;
+                if (isAffineSprite) continue;
+
+                int paletteShift = (oamData[pos + 5] >> 4) & 0xF;
+                if (paletteShift >= 4) continue; // bug frame — skip (matches DrawOAMSprites)
+                if (paletteShift > maxBank) maxBank = paletteShift;
+            }
+            return maxBank;
+        }
+
+        /// <summary>
+        /// Count the 16-color palette banks a battle animation's sprites use — the
+        /// cross-platform replacement for WinForms
+        /// <c>ImageUtil.GetPalette16Count(DrawBitmap)</c> used by
+        /// <c>ImageBattleAnimePalletForm.JumpTo</c>. Returns <c>max(bank)+1</c> (>= 1);
+        /// the caller treats &gt;= 2 as 32-color mode (mirrors WF
+        /// <c>Is32ColorMode = (palette_count &gt;= 2)</c>).
+        ///
+        /// <para>This is an INTENTIONAL animation-wide CONSERVATIVE detector, NOT a
+        /// pixel-exact reproduction of WF: WF counts banks only in the rendered
+        /// 12-cell 90x90 sample bitmap (so it applies frame selection, crop,
+        /// transparency and draw-order overdraw); this scans every non-affine,
+        /// non-bug OAM entry across ALL sections/frames. It is strictly more
+        /// conservative — it can warn for a banked sprite WF happens not to sample,
+        /// but it NEVER misses a real multi-bank animation. The banner is a safety
+        /// hint (the palette editor edits only one 16-color sub-palette), so
+        /// over-warning is safe and under-warning is the damaging case #1033 fixes.</para>
+        ///
+        /// <para>Returns <c>1</c> (single bank → no banner) on any guard failure
+        /// (null ROM / out-of-range record / non-pointer or unsafe section/frame/OAM
+        /// pointer / failed decompress). This is a deliberate safe default — a
+        /// malformed record shows no banner rather than a spurious one.</para>
+        /// </summary>
+        /// <param name="animeRecordAddr">ROM OFFSET of the 32-byte animation record.</param>
+        public static int CountAnimationPaletteBanks(uint animeRecordAddr)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null) return 1;
+            if (animeRecordAddr + 32 > (uint)rom.Data.Length) return 1;
+
+            uint sectionRaw = rom.u32(animeRecordAddr + 12);
+            uint frameRaw   = rom.u32(animeRecordAddr + 16);
+            uint oamRtLRaw  = rom.u32(animeRecordAddr + 20);
+
+            if (!U.isPointer(sectionRaw)) return 1;
+            uint sectionOffset = U.toOffset(sectionRaw);
+            if (!U.isSafetyOffset(sectionOffset, rom)) return 1;
+            // #1051 review: U.isSafetyOffset only validates the base offset, but
+            // GetSectionRange reads the full SECTION_COUNT-entry (48-byte) section
+            // table via rom.u32, which THROWS within 4 bytes of EOF. Guard the whole
+            // table is in-bounds so the documented "return 1 on guard failure"
+            // contract holds for a record whose section pointer sits near the ROM
+            // end. (sectionOffset < 0x02000000 from isSafetyOffset, so no overflow.)
+            if (sectionOffset + (uint)(SECTION_COUNT * 4) > (uint)rom.Data.Length) return 1;
+
+            byte[] frameData = DecompressFrameData(rom, frameRaw);
+            if (frameData == null || frameData.Length == 0) return 1;
+
+            byte[] oamData = null;
+            if (U.isPointer(oamRtLRaw))
+            {
+                uint oamOff = U.toOffset(oamRtLRaw);
+                if (U.isSafetyOffset(oamOff, rom))
+                    oamData = LZ77.decompress(rom.Data, oamOff);
+            }
+            if (oamData == null) return 1;
+
+            int maxBank = 0;
+            for (int section = 0; section < SECTION_COUNT; section++)
+            {
+                GetSectionRange(section, sectionOffset, (uint)frameData.Length, rom,
+                    out uint start, out uint end);
+                System.Collections.Generic.List<FrameInfo> frames =
+                    ParseFramesInRange(frameData, start, end);
+                if (frames == null) continue;
+                foreach (var f in frames)
+                {
+                    int b = MaxOamPaletteBank(oamData, f.OamOffset);
+                    if (b > maxBank) maxBank = b;
+                }
+            }
+            return maxBank + 1;
+        }
+
+        /// <summary>A fresh transparent 90x90 cell (for missing/failed frames).</summary>
+        static IImage BlankSampleCell()
+        {
+            IImageService svc = CoreState.ImageService;
+            if (svc == null) return null;
+            var img = svc.CreateImage(SampleCellSize, SampleCellSize);
+            img.SetPixelData(new byte[SampleCellSize * SampleCellSize * 4]);
+            return img;
+        }
+
+        /// <summary>
+        /// Blit a (possibly null) 90x90 cell into the composite grid at
+        /// (<paramref name="gx"/>, <paramref name="gy"/>). Null/short cells are
+        /// skipped (the grid stays transparent there).
+        /// </summary>
+        static void BlitCellIntoGrid(IImage cell, byte[] gridPixels, int gridW, int gridH,
+            int gx, int gy)
+        {
+            if (cell == null) return;
+            byte[] cellPixels = cell.GetPixelData();
+            if (cellPixels == null) return;
+
+            int cw = cell.Width;
+            int ch = cell.Height;
+            for (int y = 0; y < ch; y++)
+            {
+                int dy = gy + y;
+                if (dy < 0 || dy >= gridH) continue;
+                for (int x = 0; x < cw; x++)
+                {
+                    int dx = gx + x;
+                    if (dx < 0 || dx >= gridW) continue;
+
+                    int si = (y * cw + x) * 4;
+                    if (si + 3 >= cellPixels.Length) continue;
+
+                    int di = (dy * gridW + dx) * 4;
+                    gridPixels[di + 0] = cellPixels[si + 0];
+                    gridPixels[di + 1] = cellPixels[si + 1];
+                    gridPixels[di + 2] = cellPixels[si + 2];
+                    gridPixels[di + 3] = cellPixels[si + 3];
+                }
+            }
+        }
+
         /// <summary>
         /// GBA OAM affine transform matrix (PA/PB/PC/PD).
         /// Represents the 2x2 fixed-point matrix used for rotation/scaling.

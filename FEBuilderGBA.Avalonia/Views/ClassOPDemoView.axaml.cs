@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using global::Avalonia.Controls;
 using global::Avalonia.Interactivity;
+using FEBuilderGBA.Avalonia.Controls;
 using FEBuilderGBA.Avalonia.Services;
 using FEBuilderGBA.Avalonia.ViewModels;
 using FEBuilderGBA.Core;
@@ -58,12 +59,19 @@ namespace FEBuilderGBA.Avalonia.Views
             DescTextIdBox.ValueChanged += OnDescTextIdChanged;
             JpNamePtrBox.ValueChanged += OnJpNamePtrChanged;
             PaletteIdBox.ValueChanged += OnPaletteIdChanged;
-            DisplayWeaponBox.ValueChanged += OnDisplayWeaponChanged;
+            // #950 T4: DisplayWeaponBox is now an IdFieldControl — its routed
+            // ValueChanged (ClassId_ValueChanged) is wired in AXAML, not here.
             AnimePtrBox.ValueChanged += OnAnimePtrChanged;
             // N2B2 is the special-spec byte that the 3-choice combo maps to
             // — NOT N2B0 which is the fixed 0x05 marker (per the orphan
             // WF designer + Copilot CLI plan-review v2 finding #2 nit).
             N2B2Box.ValueChanged += OnN2B2Changed;
+            // #1032: editing the N1 glyph id live-updates the font-glyph image
+            // preview (mirrors WF OPCLASSDEMOFONT ValueChanged re-render). Gated
+            // by `_vm.IsLoading` so the load-time spinner writes don't render
+            // mid-load (the explicit post-selection RefreshN1GlyphPreview() in
+            // OnN1Selected handles the selection case).
+            N1B0Box.ValueChanged += OnN1B0Changed;
 
             // ComboBox.Items strings are NOT scanned by ViewTranslationHelper
             // (Copilot bot review thread `PRRT_kwDOH0Mc1M6ETSJC` on PR #544),
@@ -139,7 +147,10 @@ namespace FEBuilderGBA.Avalonia.Views
             try
             {
                 var items = _vm.LoadClassOPDemoList();
-                EntryList.SetItemsWithIcons(items, i => ListIconLoaders.ClassIconLoader(items, i));
+                // #939: the row prefix is the row INDEX, not the class id. Key
+                // the icon off the real Display Weapon class id at entry+14
+                // (the value the row's class name is resolved from in the VM).
+                EntryList.SetItemsWithIcons(items, i => ListIconLoaders.ClassIconLoader(items, i, ClassIdOf));
                 if (CoreState.ROM?.RomInfo != null && TopBar != null)
                 {
                     TopBar.StartAddressText = $"0x{CoreState.ROM.RomInfo.op_class_demo_pointer:X08}";
@@ -200,7 +211,12 @@ namespace FEBuilderGBA.Avalonia.Views
                 ? R._("Default palette") : $"Palette 0x{_vm.B13:X02}";
 
             DisplayWeaponBox.Value = _vm.B14;
-            try { ClassNamePreview.Text = NameResolver.GetClassName(_vm.B14); }
+            try
+            {
+                string className = NameResolver.GetClassName(_vm.B14);
+                ClassNamePreview.Text = className;
+                DisplayWeaponBox.NameText = className;
+            }
             catch { ClassNamePreview.Text = ""; }
 
             AllyEnemyColorBox.Value = _vm.B15;
@@ -259,11 +275,64 @@ namespace FEBuilderGBA.Avalonia.Views
                 ? R._("Default palette") : $"Palette 0x{id:X02}";
         }
 
-        void OnDisplayWeaponChanged(object? sender, NumericUpDownValueChangedEventArgs e)
+        // #950 T4: DisplayWeaponBox is the B14 class field (WF J_14_CLASS).
+        // Migrated to a class IdFieldControl — routed ValueChanged refreshes
+        // the ClassNamePreview readout AND the IdFieldControl's own inline name
+        // preview; Jump/Pick open the Class editor (ClassFE6View for FE6).
+        static uint ClassAddrFor(uint classId)
+        {
+            var rom = CoreState.ROM;
+            if (rom?.RomInfo == null) return 0;
+            uint classPtr = rom.RomInfo.class_pointer;
+            if (classPtr == 0) return 0;
+            uint baseAddr = rom.p32(classPtr);
+            if (!U.isSafetyOffset(baseAddr, rom)) return 0;
+            uint dataSize = rom.RomInfo.class_datasize;
+            if (dataSize == 0) return 0;
+            uint entryAddr = baseAddr + classId * dataSize;
+            if (!U.isSafetyOffset(entryAddr, rom)) return 0;
+            if (!U.isSafetyOffset(entryAddr + dataSize - 1, rom)) return 0;
+            return entryAddr;
+        }
+
+        void ClassId_Jump(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                uint addr = ClassAddrFor(DisplayWeaponBox.Value);
+                if (addr == 0) return;
+                if (CoreState.ROM?.RomInfo?.version == 6)
+                    WindowManager.Instance.Navigate<ClassFE6View>(addr);
+                else
+                    WindowManager.Instance.Navigate<ClassEditorView>(addr);
+            }
+            catch (Exception ex) { Log.Error("ClassOPDemoView.ClassId_Jump failed: {0}", ex.Message); }
+        }
+
+        async void ClassId_Pick(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                uint addr = ClassAddrFor(DisplayWeaponBox.Value);
+                PickResult? result;
+                if (CoreState.ROM?.RomInfo?.version == 6)
+                    result = await WindowManager.Instance.PickFromEditor<ClassFE6View>(addr, this);
+                else
+                    result = await WindowManager.Instance.PickFromEditor<ClassEditorView>(addr, this);
+                if (result != null) DisplayWeaponBox.Value = (uint)result.Index;
+            }
+            catch (Exception ex) { Log.Error("ClassOPDemoView.ClassId_Pick failed: {0}", ex.Message); }
+        }
+
+        void ClassId_ValueChanged(object? sender, IdFieldValueChangedEventArgs e)
         {
             if (_vm.IsLoading) return;
-            uint id = (uint)(DisplayWeaponBox.Value ?? 0);
-            try { ClassNamePreview.Text = NameResolver.GetClassName(id); }
+            try
+            {
+                string name = NameResolver.GetClassName(e.NewValue);
+                ClassNamePreview.Text = name;
+                DisplayWeaponBox.NameText = name;
+            }
             catch { ClassNamePreview.Text = ""; }
         }
 
@@ -319,6 +388,12 @@ namespace FEBuilderGBA.Avalonia.Views
                 }
                 finally { _vm.IsLoading = false; }
 
+                // #1032: clear any stale glyph preview when switching to a class
+                // with no N1 entries or an invalid JP-name pointer. SetItems on
+                // an empty list does NOT fire a selection callback, so this
+                // explicit clear is required.
+                N1GlyphPreview?.SetImage(null);
+
                 _n1Rows = rows;
                 var items = new List<AddrResult>();
                 for (int i = 0; i < _n1Rows.Count; i++)
@@ -354,6 +429,38 @@ namespace FEBuilderGBA.Avalonia.Views
             catch (Exception ex)
             {
                 Log.Error("ClassOPDemoView.OnN1Selected failed: {0}", ex.Message);
+            }
+            // #1032: refresh the font-glyph image preview from the just-loaded
+            // glyph id. Run OUTSIDE the `_vm.IsLoading` gate above so it isn't
+            // skipped (the ValueChanged handler is gated by IsLoading).
+            RefreshN1GlyphPreview();
+        }
+
+        // #1032: editing the N1 glyph id live-updates the preview, mirroring the
+        // WF OPCLASSDEMOFONT ValueChanged re-render. Gated by `_vm.IsLoading`.
+        void OnN1B0Changed(object? sender, NumericUpDownValueChangedEventArgs e)
+        {
+            if (_vm.IsLoading) return;
+            RefreshN1GlyphPreview();
+        }
+
+        /// <summary>
+        /// Render the N1 JP-name font glyph for the current Glyph: id into the
+        /// preview control. Port of WF OPClassFontForm.DrawFontByID/DrawFont via
+        /// the cross-platform ClassOPDemoFontRenderCore. A null/invalid id
+        /// clears the preview (GbaImageControl.SetImage(null)).
+        /// </summary>
+        void RefreshN1GlyphPreview()
+        {
+            try
+            {
+                N1GlyphPreview?.SetImage(
+                    ClassOPDemoFontRenderCore.RenderGlyphById(CoreState.ROM, (uint)(N1B0Box.Value ?? 0)));
+            }
+            catch (Exception ex)
+            {
+                Log.Error("ClassOPDemoView.RefreshN1GlyphPreview failed: {0}", ex.Message);
+                N1GlyphPreview?.SetImage(null);
             }
         }
 
@@ -484,7 +591,8 @@ namespace FEBuilderGBA.Avalonia.Views
                 _vm.P8 = (uint)(JpNamePtrBox.Value ?? 0);
                 _vm.B12 = (uint)(JpNameLenBox.Value ?? 0);
                 _vm.B13 = (uint)(PaletteIdBox.Value ?? 0);
-                _vm.B14 = (uint)(DisplayWeaponBox.Value ?? 0);
+                // #950 T4: IdFieldControl.Value is a non-nullable uint.
+                _vm.B14 = DisplayWeaponBox.Value;
                 _vm.B15 = (uint)(AllyEnemyColorBox.Value ?? 0);
                 _vm.B16 = (uint)(BattleAnimeBox.Value ?? 0);
                 _vm.B17 = (uint)(MagicEffectBox.Value ?? 0);
@@ -677,6 +785,17 @@ namespace FEBuilderGBA.Avalonia.Views
                 Log.Error("ClassOPDemoView.N1_ListExpand failed: {0}", ex.Message);
                 CoreState.Services?.ShowError(string.Format(R._("Failed to expand JP name font block: {0}"), ex.Message));
             }
+        }
+
+        // #939: resolve the real class id (Display Weapon, u8 at entry+14) for
+        // the list icon. Guards a null ROM by returning 0 → the loader returns
+        // null (no icon), never throws.
+        static uint ClassIdOf(AddrResult r)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom?.RomInfo == null) return 0;
+            if (!U.isSafetyOffset(r.addr + 14, rom)) return 0;
+            return rom.u8(r.addr + 14);
         }
 
         public void NavigateTo(uint address) => EntryList.SelectAddress(address);

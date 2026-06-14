@@ -273,6 +273,50 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         /// </summary>
         public int SelectedSongIndex { get; set; } = -1;
 
+        // ---- #1014: Source-file affordance (mirrors WorldMapImageViewModel /
+        // ImageBGViewModel). WF SongTrackForm records the imported source-music
+        // path under the PER-SONG ResourceCache key "Song_" + hex(songId) — NOT
+        // a fixed key, NOT the song-header address (WF SongTrackForm.cs:137-146,
+        // 303-305,560-563). Open Source File / Folder become available only when
+        // the recorded file exists. ----
+        string _sourceFilePath = string.Empty;
+        bool _isSourceFileAvailable;
+        public string SourceFilePath { get => _sourceFilePath; set => SetField(ref _sourceFilePath, value); }
+        public bool IsSourceFileAvailable { get => _isSourceFileAvailable; set => SetField(ref _isSourceFileAvailable, value); }
+
+        /// <summary>Build the per-song ResourceCache key (WF "Song_" + hex(songId)).</summary>
+        static string SourceFileResourceKey(uint songId) => "Song_" + U.ToHexString(songId);
+
+        /// <summary>
+        /// Re-read the recorded source-music path for <paramref name="songId"/>
+        /// from ResourceCache (WF per-song "Song_" + hex(songId) key). Called
+        /// after each song selection so Open Source File / Folder light up for
+        /// the selected song only.
+        /// </summary>
+        public void RefreshSourceFile(uint songId)
+        {
+            var cache = CoreState.ResourceCache as FEBuilderGBA.EtcCacheResource;
+            if (cache == null) { IsSourceFileAvailable = false; SourceFilePath = string.Empty; return; }
+            string path = cache.At(SourceFileResourceKey(songId), string.Empty);
+            SourceFilePath = path ?? string.Empty;
+            IsSourceFileAvailable = !string.IsNullOrEmpty(SourceFilePath) && System.IO.File.Exists(SourceFilePath);
+        }
+
+        /// <summary>
+        /// Record a new source-music path for <paramref name="songId"/> after a
+        /// successful MIDI import (WF SongTrackForm ImportButton_Click records
+        /// the picked file under "Song_" + hex(songId)).
+        /// </summary>
+        public void RecordSourceFile(uint songId, string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            var cache = CoreState.ResourceCache as FEBuilderGBA.EtcCacheResource;
+            if (cache == null) return;
+            cache.Update(SourceFileResourceKey(songId), path);
+            SourceFilePath = path;
+            IsSourceFileAvailable = System.IO.File.Exists(path);
+        }
+
         /// <summary>
         /// Export the current song as a MIDI file.
         /// Returns null on success, or an error message on failure.
@@ -316,34 +360,132 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         }
 
         /// <summary>
-        /// Import a MIDI file into the current song.
-        /// Converts MIDI to GBA format and writes to ROM.
-        /// Returns null on success, or an error/info message string.
+        /// Resolve the active song-table base offset. Mirrors
+        /// <see cref="LoadFullList"/>: uses the user-edited
+        /// <see cref="ReadStartAddress"/> when set (so a custom scan base is
+        /// honoured), else derefs <c>RomInfo.sound_table_pointer</c>. Returns
+        /// <see cref="U.NOT_FOUND"/> when no valid base can be resolved.
         /// </summary>
-        public string? ImportMidi(string filename)
+        uint ResolveSongTableBase()
         {
+            ROM rom = CoreState.ROM;
+            if (rom?.RomInfo == null) return U.NOT_FOUND;
+
+            uint tableBase;
+            if (ReadStartAddress != 0)
+            {
+                tableBase = ReadStartAddress;
+            }
+            else
+            {
+                uint tablePtr = rom.RomInfo.sound_table_pointer;
+                if (tablePtr == 0) return U.NOT_FOUND;
+                tableBase = rom.p32(tablePtr);
+            }
+            return U.isSafetyOffset(tableBase) ? tableBase : U.NOT_FOUND;
+        }
+
+        /// <summary>
+        /// Compute the ROM offset of the 4-byte song-table ENTRY pointer slot
+        /// for the currently-selected song. This is the slot
+        /// <see cref="SongMidiCore.ImportMidiFile"/> repoints (the CLI
+        /// <c>--import-midi</c> passes the same <c>tableBase + songId*8</c>
+        /// address), NOT the dereferenced song-header offset. Returns
+        /// <see cref="U.NOT_FOUND"/> when no song is selected or the slot is
+        /// out of range. Each table entry is 8 bytes (4-byte header pointer +
+        /// 4-byte player type).
+        /// </summary>
+        public uint GetSelectedSongTableEntryAddr()
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null || SelectedSongIndex < 0) return U.NOT_FOUND;
+
+            uint tableBase = ResolveSongTableBase();
+            if (tableBase == U.NOT_FOUND) return U.NOT_FOUND;
+
+            // Compute in long so a large SelectedSongIndex can't overflow/wrap
+            // a uint into an in-range-looking-but-wrong offset (which would make
+            // ImportMidi repoint the WRONG ROM address). Reject anything whose
+            // 8-byte entry would not fit fully inside rom.Data.
+            long entryAddrLong = (long)tableBase + (long)SelectedSongIndex * 8L;
+            if (entryAddrLong + 8 > rom.Data.Length) return U.NOT_FOUND;
+
+            uint entryAddr = (uint)entryAddrLong;
+            if (!U.isSafetyOffset(entryAddr)) return U.NOT_FOUND;
+            return entryAddr;
+        }
+
+        /// <summary>
+        /// Import a MIDI file into the currently-selected song.
+        /// Converts MIDI to GBA format, appends it to ROM free space, and
+        /// repoints the song-table entry slot at the new song header.
+        /// Returns <c>null</c> on success (with <paramref name="summary"/> set
+        /// to a human-readable import report), or an error message string on
+        /// failure (with <paramref name="summary"/> empty).
+        /// </summary>
+        /// <remarks>
+        /// The caller MUST wrap this in an ambient undo scope
+        /// (<c>UndoService.Begin/Commit/Rollback</c>) so the
+        /// <c>rom.write_range</c> + <c>rom.write_u32</c> performed by
+        /// <see cref="SongMidiCore.ImportMidiFile"/> are captured as a single
+        /// undo record. <c>FindFreeSpace</c> never resizes <c>rom.Data</c>,
+        /// so a Rollback restores the ROM byte-identical.
+        /// </remarks>
+        public string? ImportMidi(string filename, out string summary)
+        {
+            summary = string.Empty;
+
             ROM rom = CoreState.ROM;
             if (rom == null || CurrentAddr == 0)
                 return "No song loaded.";
 
+            // WF parity: SongID 0 is write-protected (UseWriteProtectionID00) —
+            // never repoint the silence song's table slot (mirrors Write_Click).
+            if (SelectedSongIndex == 0)
+                return "Song ID 0 is write-protected (silence song).";
+
             if (!File.Exists(filename))
                 return $"File not found: {filename}";
+
+            // Resolve the song-table entry pointer slot (the address
+            // ImportMidiFile repoints). Using the header offset here would
+            // clobber the old header's first 4 bytes instead of redirecting
+            // the table entry, so resolve the real slot.
+            uint songTableEntryAddr = GetSelectedSongTableEntryAddr();
+            if (songTableEntryAddr == U.NOT_FOUND)
+                return "Cannot resolve the song-table entry for the selected song.";
 
             // Parse MIDI info for summary
             var midiInfo = SongMidiCore.ParseMidiFile(filename);
             if (midiInfo == null)
                 return "Failed to parse MIDI file -- invalid format.";
 
-            // Convert and write to ROM
-            string result = SongMidiCore.ImportMidiFile(filename, CurrentAddr, InstrumentAddr);
+            // Convert and write to ROM. InstrumentAddr is the raw GBA pointer
+            // read from the song header +4 (matches the CLI contract).
+            string result = SongMidiCore.ImportMidiFile(filename, songTableEntryAddr, InstrumentAddr);
             if (!string.IsNullOrEmpty(result))
                 return result; // error message
 
-            // Reload the entry to reflect new data
-            LoadEntry(CurrentAddr);
+            // Reload the entry from the freshly-repointed table slot so the UI
+            // reflects the new song header / track data.
+            uint newHeaderPtr = rom.u32(songTableEntryAddr);
+            if (U.isPointer(newHeaderPtr))
+                LoadEntry(U.toOffset(newHeaderPtr));
 
-            // Return success summary
-            return FormatMidiImportSuccess(midiInfo, filename);
+            summary = FormatMidiImportSuccess(midiInfo, filename);
+            return null; // success
+        }
+
+        /// <summary>
+        /// Convenience overload for callers that only need the success/error
+        /// signal (returns the error string on failure, or the success summary
+        /// on success). Prefer the <c>out summary</c> overload in handlers that
+        /// must distinguish success from failure for undo Commit/Rollback.
+        /// </summary>
+        public string? ImportMidi(string filename)
+        {
+            string? error = ImportMidi(filename, out string summary);
+            return error ?? summary;
         }
 
         /// <summary>Build a human-readable summary of a successful MIDI import.</summary>

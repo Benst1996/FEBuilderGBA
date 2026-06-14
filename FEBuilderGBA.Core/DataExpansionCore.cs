@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace FEBuilderGBA
 {
@@ -9,6 +10,71 @@ namespace FEBuilderGBA
     /// </summary>
     public static class DataExpansionCore
     {
+        /// <summary>
+        /// How <see cref="ExpandTableTo(ROM, uint, uint, uint, uint, ExpandOptions)"/>
+        /// fills the new rows <c>[currentCount, newCount)</c>.
+        /// </summary>
+        public enum ExpandFill
+        {
+            /// <summary>Zero-fill the new rows (the original #501/#1078
+            /// behavior — preserves the compatibility shim's contract).</summary>
+            Zero,
+
+            /// <summary>Copy row 0 (the first <c>entrySize</c> bytes of the
+            /// table base) into EVERY new visible row. Required for
+            /// validity-gated enumerators such as
+            /// <see cref="MapSettingCore.MakeMapIDList(ROM)"/> that stop at the
+            /// first invalid row — zero-filled rows would be invalid and the
+            /// expand would be a no-op (#1085).</summary>
+            First,
+        }
+
+        /// <summary>
+        /// How references to the moved table base are repointed by
+        /// <see cref="ExpandTableTo(ROM, uint, uint, uint, uint, ExpandOptions)"/>.
+        /// </summary>
+        public enum ExpandRepoint
+        {
+            /// <summary>Repoint ONLY the canonical pointer at
+            /// <c>pointerAddr</c>. Correct for an UNSHARED table (the original
+            /// #501/#1078 behavior).</summary>
+            PointerSlotOnly,
+
+            /// <summary>After moving, also rescan the WHOLE ROM and repoint
+            /// every raw 32-bit pointer (<see cref="U.GrepPointerAll"/>) AND
+            /// ARM-Thumb LDR literal-pool load (<see cref="U.GrepPointerAllOnLDR"/>)
+            /// to the old base. Required for an ENGINE table whose base is read
+            /// from multiple sites (#1085) — a single-slot repoint would leave
+            /// stale references into the wiped old region and corrupt the ROM.</summary>
+            RawAndLdrAll,
+        }
+
+        /// <summary>
+        /// Options bundle for the generic
+        /// <see cref="ExpandTableTo(ROM, uint, uint, uint, uint, ExpandOptions)"/>
+        /// overload — avoids positional-bool soup (issue #1085 plan-review
+        /// finding #2). The legacy
+        /// <see cref="ExpandTableTo(ROM, uint, uint, uint, uint, bool)"/>
+        /// overload is a thin compatibility shim that maps to
+        /// <c>{ Fill = Zero, Repoint = PointerSlotOnly }</c> so the #501/#1078
+        /// callers stay byte-identical.
+        /// </summary>
+        public sealed class ExpandOptions
+        {
+            /// <summary>How to fill the new rows. Default
+            /// <see cref="ExpandFill.Zero"/>.</summary>
+            public ExpandFill Fill { get; set; } = ExpandFill.Zero;
+
+            /// <summary>How to repoint references to the moved base. Default
+            /// <see cref="ExpandRepoint.PointerSlotOnly"/>.</summary>
+            public ExpandRepoint Repoint { get; set; } = ExpandRepoint.PointerSlotOnly;
+
+            /// <summary>Terminator policy — see the <c>fullZeroTerminatorRow</c>
+            /// parameter docs. Default <c>false</c> (a single
+            /// <c>0xFFFFFFFF</c> dword).</summary>
+            public bool FullZeroTerminatorRow { get; set; } = false;
+        }
+
         /// <summary>
         /// Result of a table expansion operation.
         /// </summary>
@@ -23,8 +89,23 @@ namespace FEBuilderGBA
             /// <summary>ROM offset of the new table base.</summary>
             public uint NewBaseAddress { get; set; }
 
-            /// <summary>Entry count after expansion (old count + 1).</summary>
+            /// <summary>Entry count after expansion. For <see cref="ExpandTable"/>
+            /// this is <c>currentCount + 1</c>; for
+            /// <see cref="ExpandTableTo(ROM, uint, uint, uint, uint, ExpandOptions)"/>
+            /// (and its shim) it is the requested target <c>newCount</c>.</summary>
             public uint NewCount { get; set; }
+
+            /// <summary>
+            /// The slots that <see cref="ExpandRepoint.RawAndLdrAll"/> repointed
+            /// to the new base (raw 32-bit + ARM-Thumb LDR literal-pool slots),
+            /// INCLUDING the canonical pointer slot. Empty for
+            /// <see cref="ExpandRepoint.PointerSlotOnly"/> (the single-slot
+            /// repoint is not recorded here — it is implicit in
+            /// <see cref="NewBaseAddress"/>). Exposed for the #1085 audit guard
+            /// so the orchestrator can assert the canonical slot is covered and
+            /// fail loudly on an implausible repoint count.
+            /// </summary>
+            public IReadOnlyList<uint> RepointedSlots { get; set; } = System.Array.Empty<uint>();
         }
 
         /// <summary>
@@ -228,12 +309,19 @@ namespace FEBuilderGBA
         ///         counts row 0 as valid even when it is all zero.</item>
         ///   <item>Zero-fills the new (<paramref name="newCount"/> -
         ///         <paramref name="currentCount"/>) rows.</item>
-        ///   <item>Writes a <c>0xFFFFFFFF</c> terminator at
-        ///         <c>newBase + newCount * entrySize</c> so pointer-first
-        ///         scan predicates (<c>!U.isSafetyPointerOrNull(D0)</c>) stop
-        ///         at exactly <paramref name="newCount"/> rows even when the
-        ///         helper resizes the ROM into a freshly-zeroed region. The
-        ///         allocation request size is therefore <c>(newCount * entrySize) + 4</c>.</item>
+        ///   <item>Writes a terminator at <c>newBase + newCount * entrySize</c>
+        ///         so row scans stop at exactly <paramref name="newCount"/> rows
+        ///         even when the helper resizes the ROM into a freshly-zeroed
+        ///         region. By default (<paramref name="fullZeroTerminatorRow"/>
+        ///         <c>== false</c>, the #501 caller) this is a single
+        ///         <c>0xFFFFFFFF</c> dword for pointer-first scan predicates
+        ///         (<c>!U.isSafetyPointerOrNull(D0)</c>) and the allocation
+        ///         request size is <c>(newCount * entrySize) + 4</c>. When
+        ///         <paramref name="fullZeroTerminatorRow"/> <c>== true</c> (the
+        ///         #1078 Unit-Palette caller) the terminator is a FULL
+        ///         <paramref name="entrySize"/>-byte all-zero row (NO
+        ///         <c>0xFFFFFFFF</c> dword) and the allocation request size is
+        ///         <c>(newCount * entrySize) + entrySize</c>.</item>
         ///   <item>Wipes the OLD region with <c>0x00</c> (matches WF
         ///         <c>InputFormRef.ExpandsArea</c> at line 10787; intentionally
         ///         differs from <see cref="ExpandTable"/> which uses
@@ -281,8 +369,62 @@ namespace FEBuilderGBA
         /// <param name="currentCount">Number of rows currently in the table
         /// (use the editor's row count — <i>not</i> <see cref="EstimateEntryCount"/>).</param>
         /// <param name="newCount">Target row count. Must be &gt;= <paramref name="currentCount"/>.</param>
-        public static ExpandResult ExpandTableTo(ROM rom, uint pointerAddr, uint entrySize, uint currentCount, uint newCount)
+        /// <param name="fullZeroTerminatorRow">Terminator policy for the row
+        /// immediately past <paramref name="newCount"/>. <c>false</c> (default —
+        /// byte-identical to the #501 caller) reserves and writes a single
+        /// <c>0xFFFFFFFF</c> terminator dword (4 bytes). <c>true</c> reserves and
+        /// writes a FULL <paramref name="entrySize"/>-byte all-zero terminator
+        /// row (NO <c>0xFFFFFFFF</c> dword) — required when the row-scan
+        /// predicate treats a <c>0xFFFFFFFF</c>-first/zero-tail row as a phantom
+        /// valid entry (e.g. the Unit Palette editor's
+        /// <c>P12==0 &amp;&amp; name!=0</c> acceptance, #1078). The allocation
+        /// request size is therefore <c>(newCount * entrySize) +
+        /// (fullZeroTerminatorRow ? entrySize : 4)</c>.</param>
+        public static ExpandResult ExpandTableTo(ROM rom, uint pointerAddr, uint entrySize, uint currentCount, uint newCount, bool fullZeroTerminatorRow = false)
         {
+            // Thin compatibility shim — maps the legacy positional-bool overload
+            // (the #501/#1078 callers) to the generic options-based overload
+            // with the original {Fill = Zero, Repoint = PointerSlotOnly}
+            // behavior. This MUST stay byte-identical so those callers' tests
+            // remain green (issue #1085 plan-review finding #2).
+            return ExpandTableTo(rom, pointerAddr, entrySize, currentCount, newCount,
+                new ExpandOptions
+                {
+                    Fill = ExpandFill.Zero,
+                    Repoint = ExpandRepoint.PointerSlotOnly,
+                    FullZeroTerminatorRow = fullZeroTerminatorRow,
+                });
+        }
+
+        /// <summary>
+        /// Generic options-based table-expansion helper. See the legacy
+        /// <see cref="ExpandTableTo(ROM, uint, uint, uint, uint, bool)"/> shim's
+        /// docs for the zero-fill / single-slot-repoint base behavior; the
+        /// <paramref name="opts"/> bundle adds:
+        /// <list type="bullet">
+        ///   <item><see cref="ExpandFill.First"/> — copies row 0 into EVERY new
+        ///         visible row <c>[currentCount, newCount)</c>, leaving the
+        ///         invalid terminator at row index <c>newCount</c>. After a
+        ///         FIRST-fill expand a validity-gated enumerator
+        ///         (<see cref="MapSettingCore.MakeMapIDList(ROM)"/>) grows by
+        ///         EXACTLY <c>newCount - currentCount</c> (NOT one fewer — the
+        ///         Core <c>newCount</c> is the target VISIBLE row count, unlike
+        ///         WF <c>ExpandsArea</c> whose <c>new_count</c> includes the
+        ///         terminator row; issue #1085 plan-review finding #1).</item>
+        ///   <item><see cref="ExpandRepoint.RawAndLdrAll"/> — after the move,
+        ///         rescans the whole ROM and repoints every raw 32-bit + ARM
+        ///         LDR literal-pool reference to the old base
+        ///         (<see cref="RepointAllReferences"/>), recording the repointed
+        ///         slots (incl. the canonical pointer) into
+        ///         <see cref="ExpandResult.RepointedSlots"/> for the caller's
+        ///         audit guard.</item>
+        /// </list>
+        /// All writes route through the caller's ambient undo scope.
+        /// </summary>
+        public static ExpandResult ExpandTableTo(ROM rom, uint pointerAddr, uint entrySize, uint currentCount, uint newCount, ExpandOptions opts)
+        {
+            if (opts == null)
+                return Fail("ExpandOptions is null.");
             if (rom == null || rom.Data == null)
                 return Fail("ROM is null.");
             if (entrySize == 0)
@@ -292,9 +434,16 @@ namespace FEBuilderGBA
             if (pointerAddr + 4 > (uint)rom.Data.Length)
                 return Fail("Pointer address is out of ROM bounds.");
 
+            bool fullZeroTerminatorRow = opts.FullZeroTerminatorRow;
+
             uint oldBase = rom.p32(pointerAddr);
             if (oldBase == 0 || oldBase >= (uint)rom.Data.Length)
                 return Fail("Table pointer is invalid (null or out of bounds).");
+
+            // Bytes reserved past the last row for the terminator. The default
+            // (#501) policy is a single 0xFFFFFFFF dword (4 bytes); the
+            // full-zero-row policy (#1078) reserves a whole entrySize-byte row.
+            uint terminatorReserve = fullZeroTerminatorRow ? entrySize : 4;
 
             // Overflow guards for both `currentCount * entrySize` and
             // `newCount * entrySize` — without these, a malicious / corrupt
@@ -306,15 +455,16 @@ namespace FEBuilderGBA
                 return Fail("currentCount * entrySize overflows 32-bit address space.");
             uint oldTableSize = currentCount * entrySize;
             // Overflow guard for newCount * entrySize (newCount >= currentCount,
-            // so currentCount can't bypass this on a single check). Reserve 4
-            // bytes for the trailing 0xFFFFFFFF terminator so the +4 below
-            // also can't wrap.
-            if (entrySize != 0 && newCount > (uint.MaxValue - 4) / entrySize)
+            // so currentCount can't bypass this on a single check). Reserve the
+            // terminator bytes so the `newTableSize + terminatorReserve` alloc
+            // below also can't wrap.
+            if (entrySize != 0 && newCount > (uint.MaxValue - terminatorReserve) / entrySize)
                 return Fail("newCount * entrySize overflows 32-bit address space.");
             uint newTableSize = newCount * entrySize;
 
-            // Verify old table fits in ROM.
-            if (oldBase + oldTableSize > (uint)rom.Data.Length)
+            // Verify old table fits in ROM. Use a wrap-safe `size > Length - addr`
+            // form (oldBase < Length already, so Length - oldBase can't wrap).
+            if (oldTableSize > (uint)rom.Data.Length - oldBase)
                 return Fail("Current table extends beyond ROM bounds.");
 
             // No-op fast path — newCount == currentCount.
@@ -328,9 +478,11 @@ namespace FEBuilderGBA
                 };
             }
 
-            // Allocate newCount * entrySize + 4 bytes (the +4 is the
-            // explicit 0xFFFFFFFF terminator dword).
-            uint allocSize = newTableSize + 4;
+            // Allocate newCount * entrySize + terminatorReserve bytes (the
+            // reserve is either the 4-byte 0xFFFFFFFF terminator dword, or a
+            // full entrySize-byte all-zero terminator row — see
+            // fullZeroTerminatorRow).
+            uint allocSize = newTableSize + terminatorReserve;
             uint newBase = FindFreeSpace(rom, allocSize);
             if (newBase == U.NOT_FOUND)
             {
@@ -368,21 +520,54 @@ namespace FEBuilderGBA
                 rom.write_range(newBase, copyBytes);
             }
 
-            // Zero-fill the new rows. Route through rom.write_fill so the
-            // ambient-undo scope captures the bytes that were there before.
+            // Fill the new rows [currentCount, newCount). Route through
+            // rom.write_range / rom.write_fill so the ambient-undo scope
+            // captures the bytes that were there before.
             uint newRowsStart = newBase + oldTableSize;
             uint newRowsSize = newTableSize - oldTableSize;
             if (newRowsSize > 0)
             {
-                rom.write_fill(newRowsStart, newRowsSize, 0x00);
+                bool firstFilled = false;
+                // FIRST-fill (#1085): copy row 0 (the table base's first
+                // entrySize bytes — already at newBase after the verbatim
+                // copy above) into EVERY new visible row [currentCount,
+                // newCount). The terminator at row index newCount is written
+                // separately below and stays the natural invalid terminator,
+                // so a validity-gated enumerator grows by EXACTLY
+                // newCount - currentCount. FIRST-fill requires a source row 0;
+                // with currentCount == 0 there is none, so fall back to
+                // zero-fill (matches WF ExpandsArea's new_size >= block_size
+                // guard).
+                if (opts.Fill == ExpandFill.First && currentCount > 0)
+                {
+                    byte[] row0 = rom.getBinaryData(newBase, entrySize);
+                    for (uint i = currentCount; i < newCount; i++)
+                    {
+                        rom.write_range(newBase + i * entrySize, row0);
+                    }
+                    firstFilled = true;
+                }
+
+                if (!firstFilled)
+                {
+                    rom.write_fill(newRowsStart, newRowsSize, 0x00);
+                }
             }
 
-            // Write the explicit 0xFFFFFFFF terminator at
-            // newBase + newCount * entrySize. Required so pointer-first row
-            // scans stop at exactly newCount even when surrounding bytes are
-            // 0x00 (e.g. after a ROM resize into a zeroed region).
+            // Write the explicit terminator at newBase + newCount * entrySize.
+            // Required so row scans stop at exactly newCount even when
+            // surrounding bytes are 0x00 (e.g. after a ROM resize into a zeroed
+            // region). Two policies (see fullZeroTerminatorRow):
+            //   false (#501): a single 0xFFFFFFFF dword.
+            //   true  (#1078): a FULL entrySize-byte all-zero row, so a scan
+            //                  predicate that accepts a 0xFFFFFFFF-first row
+            //                  (or reads past a 4-byte terminator into the
+            //                  next row's fields) still stops here.
             uint termAddr = newBase + newTableSize;
-            rom.write_u32(termAddr, 0xFFFFFFFF);
+            if (fullZeroTerminatorRow)
+                rom.write_fill(termAddr, entrySize, 0x00);
+            else
+                rom.write_u32(termAddr, 0xFFFFFFFF);
 
             // Wipe the OLD region with 0x00 — matches WF
             // InputFormRef.ExpandsArea line 10787. NOTE: ExpandTable (the +1
@@ -393,8 +578,37 @@ namespace FEBuilderGBA
                 rom.write_fill(oldBase, oldTableSize, 0x00);
             }
 
-            // Update the pointer to point to the new location.
-            rom.write_p32(pointerAddr, newBase);
+            // Repoint references to the moved base.
+            IReadOnlyList<uint> repointedSlots = System.Array.Empty<uint>();
+            if (opts.Repoint == ExpandRepoint.RawAndLdrAll)
+            {
+                // All-reference repoint (#1085). For an ENGINE table whose base
+                // is read from multiple sites (raw 32-bit pointers + ARM-Thumb
+                // LDR literal-pool loads), a single-slot write is NOT enough —
+                // stale references into the wiped old region would corrupt the
+                // ROM. RepointReferenceSlots rescans the whole ROM and repoints
+                // every unique slot, INCLUDING the canonical pointer slot
+                // (which still holds oldBase here — we have NOT written it yet,
+                // so it IS a raw hit and the audit guard can assert it is
+                // covered). Pass null undo so the writes record into the
+                // caller's already-open ambient scope WITHOUT
+                // RepointReferenceSlots opening + closing its own (BeginUndoScope
+                // is non-reentrant). The recorded slot list drives the
+                // orchestrator's audit guard.
+                repointedSlots = RepointReferenceSlots(rom, oldBase, newBase, null);
+
+                // Defense-in-depth: if the canonical slot was somehow NOT among
+                // the scan hits (e.g. it sits in the danger zone the scanner
+                // skips), write it explicitly so the table is never left
+                // dangling. Idempotent when the scan already covered it.
+                if (rom.p32(pointerAddr) != newBase)
+                    rom.write_p32(pointerAddr, newBase);
+            }
+            else
+            {
+                // Single-slot repoint — correct for an UNSHARED table.
+                rom.write_p32(pointerAddr, newBase);
+            }
 
             // Repoint comment/lint cache entries. Forward-only (matches WF
             // MoveToFreeSapceForm.RepointEtcData behavior). KnownGap — ROM
@@ -411,6 +625,7 @@ namespace FEBuilderGBA
                 Success = true,
                 NewBaseAddress = newBase,
                 NewCount = newCount,
+                RepointedSlots = repointedSlots,
             };
         }
 
@@ -471,15 +686,30 @@ namespace FEBuilderGBA
         /// danger-zone / out-of-ROM hits that were skipped (0 if none / refused).</returns>
         public static int RepointAllReferences(ROM rom, uint oldBase, uint newBase, Undo.UndoData? undo)
         {
+            return RepointReferenceSlots(rom, oldBase, newBase, undo).Count;
+        }
+
+        /// <summary>
+        /// Identical to <see cref="RepointAllReferences"/> but returns the LIST
+        /// of slots actually repointed (instead of just the count) so callers
+        /// can audit them — e.g. the #1085 map-setting orchestrator asserts the
+        /// canonical pointer slot is among them and fails loudly on an
+        /// implausible (zero / flood) count. The order is non-deterministic
+        /// (sourced from a <see cref="System.Collections.Generic.HashSet{T}"/>),
+        /// so callers must not rely on it.
+        /// </summary>
+        internal static IReadOnlyList<uint> RepointReferenceSlots(ROM rom, uint oldBase, uint newBase, Undo.UndoData? undo)
+        {
+            var written = new List<uint>();
             if (rom == null || rom.Data == null)
-                return 0;
+                return written;
 
             // Refuse safely on the 0x0–0x200 danger zone / out-of-ROM offsets.
             // Mirrors WF SearchPointer's isSafetyOffset(toOffset(moveAddress))
             // gate and the scanners' own start=0x100 floor.
             uint oldOffset = U.toOffset(oldBase);
             if (!U.isSafetyOffset(oldOffset, rom))
-                return 0;
+                return written;
 
             // Pass the pointer form to both scanners. They each call
             // U.toPointer(need) internally (idempotent), so either form works;
@@ -496,9 +726,8 @@ namespace FEBuilderGBA
                 slots.Add(slot);
 
             if (slots.Count == 0)
-                return 0;
+                return written;
 
-            int written = 0;
             IDisposable scope = (undo != null) ? ROM.BeginUndoScope(undo) : null;
             try
             {
@@ -514,7 +743,7 @@ namespace FEBuilderGBA
                     if (!U.isSafetyOffset(slot, rom) || slot + 4 > (uint)rom.Data.Length)
                         continue;
                     rom.write_p32(slot, newBase);
-                    written++;
+                    written.Add(slot);
                 }
             }
             finally
@@ -523,7 +752,7 @@ namespace FEBuilderGBA
             }
 
             // Return only the slots actually repointed (skipped danger-zone /
-            // out-of-ROM hits are excluded from the count). (#782 review.)
+            // out-of-ROM hits are excluded). (#782 review.)
             return written;
         }
 

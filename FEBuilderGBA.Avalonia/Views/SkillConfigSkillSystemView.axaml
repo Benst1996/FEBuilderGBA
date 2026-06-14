@@ -49,11 +49,16 @@
         <Label DockPanel.Dock="Top"
                AutomationProperties.AutomationId="SkillConfigSkillSystem_FilterName_Label"
                Content="Filter Name" HorizontalAlignment="Stretch" />
-        <Button DockPanel.Dock="Bottom"
-                AutomationProperties.AutomationId="SkillConfigSkillSystem_ListExpand_Button"
-                Name="ListExpandButton" Content="List Expand"
-                HorizontalAlignment="Stretch" Click="ListExpand_Click"
-                ToolTip.Tip="Pending Core extraction - tracked by #500." />
+        <!-- #997: List expansion is not yet implemented for the skill-config tables
+             (multi-table / multi-pointer per patch variant). The button is disabled
+             with the explanation on this ENABLED Border, since a disabled Avalonia
+             control won't surface its own tooltip on hover. -->
+        <Border DockPanel.Dock="Bottom"
+                ToolTip.Tip="List expansion is not yet implemented for the skill-config tables (multi-table / multi-pointer per patch variant).">
+          <Button AutomationProperties.AutomationId="SkillConfigSkillSystem_ListExpand_Button"
+                  Name="ListExpandButton" Content="List Expand"
+                  HorizontalAlignment="Stretch" IsEnabled="False" />
+        </Border>
         <controls:AddressListControl
             AutomationProperties.AutomationId="SkillConfigSkillSystem_Entry_List"
             Name="EntryList" />
@@ -87,12 +92,12 @@
                   AutomationProperties.AutomationId="SkillConfigSkillSystem_ImageImport_Button"
                   Name="ImageImportButton" Content="Image Import" Margin="8,0,0,0"
                   Click="ImageImport_Click"
-                  ToolTip.Tip="Pending Core extraction - tracked by #500." />
+                  ToolTip.Tip="Import a 16x16 skill icon (128 raw 4bpp bytes, in-place, undoable)." />
           <Button Grid.Column="3"
                   AutomationProperties.AutomationId="SkillConfigSkillSystem_ImageExport_Button"
                   Name="ImageExportButton" Content="Image Export" Margin="8,0,0,0"
                   Click="ImageExport_Click"
-                  ToolTip.Tip="Pending Core extraction - tracked by #500." />
+                  ToolTip.Tip="Export the 16x16 skill icon as a PNG." />
           <Label Grid.Column="4"
                  AutomationProperties.AutomationId="SkillConfigSkillSystem_IconAddr_Label"
                  Name="IconAddrLabel" VerticalAlignment="Center" Margin="12,0,0,0"

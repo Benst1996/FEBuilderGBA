@@ -325,6 +325,231 @@ namespace FEBuilderGBA.Core.Tests
             }
         }
 
+        // ---- GetMapNameById (#948 review: reject out-of-range / garbage) ----
+
+        [Fact]
+        public void GetMapNameById_WithNoRom_ReturnsEmpty()
+        {
+            var origRom = CoreState.ROM;
+            try
+            {
+                CoreState.ROM = null;
+                Assert.Equal("", MapSettingCore.GetMapNameById(0));
+            }
+            finally
+            {
+                CoreState.ROM = origRom;
+            }
+        }
+
+        [Fact]
+        public void GetMapNameById_ValidPointerBackedEntry_ReturnsName()
+        {
+            var origRom = CoreState.ROM;
+            try
+            {
+                var rom = new ROM();
+                rom.LoadLow("test.gba", new byte[0x1000000], "BE8E01");
+                CoreState.ROM = rom;
+
+                // Map 0 at 0x200 — pointer in the first dword makes it a valid entry.
+                WriteU32(rom.Data, (int)rom.RomInfo.map_setting_pointer, 0x08000200);
+                WriteU32(rom.Data, 0x200, 0x08000300);
+
+                // A valid entry must resolve without throwing; name may be "" if the
+                // text id is 0, but the call itself must succeed (no exception, no garbage).
+                string name = MapSettingCore.GetMapNameById(0);
+                Assert.NotNull(name);
+            }
+            finally
+            {
+                CoreState.ROM = origRom;
+            }
+        }
+
+        [Fact]
+        public void GetMapNameById_OutOfRangeId_ReturnsEmpty_NotGarbage()
+        {
+            // Regression for #948: an out-of-range mapId lands on trailing data.
+            // The entry fails IsMapSettingValid, so GetMapNameById must return ""
+            // rather than reading a garbage chapter name (or throwing).
+            var origRom = CoreState.ROM;
+            try
+            {
+                var rom = new ROM();
+                rom.LoadLow("test.gba", new byte[0x1000000], "BE8E01");
+                CoreState.ROM = rom;
+
+                uint baseAddr = 0x200;
+                WriteU32(rom.Data, (int)rom.RomInfo.map_setting_pointer, 0x08000000 + baseAddr);
+                // Exactly ONE valid map (entry 0): pointer-backed first dword.
+                WriteU32(rom.Data, (int)baseAddr, 0x08000300);
+                // Entry 1 onward stays all-zero → IsMapSettingValid returns false
+                // (no pointer, zero PLISTs). A far out-of-range id resolves the same.
+                Assert.Equal("", MapSettingCore.GetMapNameById(1));
+                Assert.Equal("", MapSettingCore.GetMapNameById(50));
+            }
+            finally
+            {
+                CoreState.ROM = origRom;
+            }
+        }
+
+        [Fact]
+        public void GetMapNameById_IdWhoseRecordRunsPastEof_ReturnsEmpty()
+        {
+            // The record START can be in-bounds while start+datasize runs past EOF.
+            // GetMapNameById must reject it (return "") instead of letting
+            // GetMapName's u8/u16 reads throw IndexOutOfRangeException. Use a
+            // full-size ROM (so the fixed ROM-info pointers are writable) but place
+            // the map table so the entry record overruns the buffer end.
+            var origRom = CoreState.ROM;
+            try
+            {
+                var rom = new ROM();
+                rom.LoadLow("test.gba", new byte[0x1000000], "BE8E01");
+                CoreState.ROM = rom;
+
+                // datasize 148 -> base + 148 must exceed Length (0x1000000).
+                uint baseAddr = 0xFFFFF0;
+                WriteU32(rom.Data, (int)rom.RomInfo.map_setting_pointer, 0x08000000 + baseAddr);
+                WriteU32(rom.Data, (int)baseAddr, 0x08000100); // looks pointer-backed
+
+                // Must not throw; must return "" (record overruns EOF).
+                Assert.Equal("", MapSettingCore.GetMapNameById(0));
+            }
+            finally
+            {
+                CoreState.ROM = origRom;
+            }
+        }
+
+        // ---- GetMapIdFromAddr (#1003 — FE6 Map Settings Jump-to-MapEditor) ----
+
+        /// <summary>
+        /// Build a synthetic FE6 ROM whose map-setting table at
+        /// <paramref name="baseAddr"/> holds <paramref name="mapCount"/> valid
+        /// pointer-backed rows (each <c>map_setting_datasize</c> bytes) followed
+        /// by an all-zero terminator row (fails IsMapSettingValid). Returns the
+        /// loaded ROM and reports the base offset + per-row size via out params.
+        /// </summary>
+        static ROM MakeFe6WithMapTable(out uint baseAddr, out uint dataSize, int mapCount = 4)
+        {
+            var rom = new ROM();
+            rom.LoadLow("synthetic-fe6.gba", new byte[0x1000000], "AFEJ01");
+            baseAddr = 0x200u;
+            dataSize = rom.RomInfo.map_setting_datasize; // FE6 = 68 or 72
+
+            WriteU32(rom.Data, (int)rom.RomInfo.map_setting_pointer, 0x08000000 + baseAddr);
+            // Each valid row's first dword is a pointer → IsMapSettingValid true.
+            for (int i = 0; i < mapCount; i++)
+            {
+                uint rowAddr = baseAddr + (uint)i * dataSize;
+                WriteU32(rom.Data, (int)rowAddr, 0x08000300); // pointer-backed → valid
+            }
+            // Terminator row (all-zero) at index mapCount → IsMapSettingValid false.
+            // The buffer is already zero there; nothing to write.
+            return rom;
+        }
+
+        [Fact]
+        public void GetMapIdFromAddr_NullRom_ReturnsNotFound()
+        {
+            Assert.Equal(U.NOT_FOUND, MapSettingCore.GetMapIdFromAddr(null!, 0x200u));
+        }
+
+        [Fact]
+        public void GetMapIdFromAddr_ValidAddresses_ReturnsCorrectId()
+        {
+            ROM rom = MakeFe6WithMapTable(out uint baseAddr, out uint dataSize, mapCount: 4);
+            Assert.Equal(0u, MapSettingCore.GetMapIdFromAddr(rom, baseAddr));
+            Assert.Equal(1u, MapSettingCore.GetMapIdFromAddr(rom, baseAddr + dataSize));
+            Assert.Equal(3u, MapSettingCore.GetMapIdFromAddr(rom, baseAddr + 3u * dataSize));
+        }
+
+        [Fact]
+        public void GetMapIdFromAddr_PointerFormAndOffsetForm_ResolveSame()
+        {
+            ROM rom = MakeFe6WithMapTable(out uint baseAddr, out uint dataSize, mapCount: 4);
+            uint offsetAddr = baseAddr + 2u * dataSize;
+            uint pointerAddr = offsetAddr + 0x08000000u;
+            Assert.Equal(2u, MapSettingCore.GetMapIdFromAddr(rom, offsetAddr));
+            Assert.Equal(MapSettingCore.GetMapIdFromAddr(rom, offsetAddr),
+                         MapSettingCore.GetMapIdFromAddr(rom, pointerAddr));
+        }
+
+        [Fact]
+        public void GetMapIdFromAddr_BelowBase_ReturnsNotFound()
+        {
+            ROM rom = MakeFe6WithMapTable(out uint baseAddr, out _, mapCount: 4);
+            Assert.Equal(U.NOT_FOUND, MapSettingCore.GetMapIdFromAddr(rom, baseAddr - 4u));
+        }
+
+        [Fact]
+        public void GetMapIdFromAddr_MisalignedAddr_ReturnsNotFound()
+        {
+            ROM rom = MakeFe6WithMapTable(out uint baseAddr, out _, mapCount: 4);
+            Assert.Equal(U.NOT_FOUND, MapSettingCore.GetMapIdFromAddr(rom, baseAddr + 1u));
+        }
+
+        [Fact]
+        public void GetMapIdFromAddr_TerminatorRow_ReturnsNotFound()
+        {
+            // base + mapCount*dataSize is the all-zero terminator row → must be
+            // rejected by the IsMapSettingValid gate (not reported as a map id).
+            ROM rom = MakeFe6WithMapTable(out uint baseAddr, out uint dataSize, mapCount: 4);
+            Assert.Equal(U.NOT_FOUND, MapSettingCore.GetMapIdFromAddr(rom, baseAddr + 4u * dataSize));
+            // One row past the terminator (also aligned, also invalid).
+            Assert.Equal(U.NOT_FOUND, MapSettingCore.GetMapIdFromAddr(rom, baseAddr + 5u * dataSize));
+        }
+
+        [Fact]
+        public void GetMapIdFromAddr_ValidLookingRowAfterTerminator_ReturnsNotFound()
+        {
+            // Rows 0,1 valid; row 2 all-zero terminator; row 3 valid-looking
+            // (pointer-backed). MakeMapIDList stops at row 2 (count == 2), so the
+            // post-terminator row 3 is NOT an enumerated entry even though it
+            // passes IsMapSettingValid in isolation — must resolve to NOT_FOUND.
+            // (Regression for Copilot CLI review #1086 blocking finding #2.)
+            var rom = new ROM();
+            rom.LoadLow("synthetic-fe6.gba", new byte[0x1000000], "AFEJ01");
+            uint baseAddr = 0x200u;
+            uint dataSize = rom.RomInfo.map_setting_datasize;
+            WriteU32(rom.Data, (int)rom.RomInfo.map_setting_pointer, 0x08000000 + baseAddr);
+            WriteU32(rom.Data, (int)(baseAddr + 0u * dataSize), 0x08000300); // row 0 valid
+            WriteU32(rom.Data, (int)(baseAddr + 1u * dataSize), 0x08000300); // row 1 valid
+            // row 2 left all-zero → terminator (IsMapSettingValid false)
+            WriteU32(rom.Data, (int)(baseAddr + 3u * dataSize), 0x08000300); // row 3 valid-looking
+
+            Assert.Equal(2, MapSettingCore.MakeMapIDList(rom).Count);
+            Assert.Equal(0u, MapSettingCore.GetMapIdFromAddr(rom, baseAddr));
+            Assert.Equal(1u, MapSettingCore.GetMapIdFromAddr(rom, baseAddr + 1u * dataSize));
+            Assert.Equal(U.NOT_FOUND, MapSettingCore.GetMapIdFromAddr(rom, baseAddr + 3u * dataSize));
+        }
+
+        [Fact]
+        public void GetMapIdFromAddr_RecordPastEof_ReturnsNotFound()
+        {
+            // The record START is in-bounds but start+datasize runs past EOF.
+            var rom = new ROM();
+            rom.LoadLow("synthetic-fe6.gba", new byte[0x1000000], "AFEJ01");
+            // Place the table base 4 bytes before EOF so an aligned row (delta 0)
+            // is in-bounds at the start but baseAddr + dataSize overruns the buffer.
+            uint baseAddr = (uint)rom.Data.Length - 4u;
+            WriteU32(rom.Data, (int)rom.RomInfo.map_setting_pointer, 0x08000000 + baseAddr);
+            Assert.Equal(U.NOT_FOUND, MapSettingCore.GetMapIdFromAddr(rom, baseAddr));
+        }
+
+        [Fact]
+        public void GetMapIdFromAddr_ZeroBasePointer_ReturnsNotFound()
+        {
+            // map_setting_pointer slot reads 0 (zero-filled) → unsafe base.
+            var rom = new ROM();
+            rom.LoadLow("synthetic-fe6.gba", new byte[0x1000000], "AFEJ01");
+            // Do NOT plant a base pointer — p32(slot) == 0 → isSafetyOffset false.
+            Assert.Equal(U.NOT_FOUND, MapSettingCore.GetMapIdFromAddr(rom, 0x200u));
+        }
+
         static void WriteU32(byte[] data, int offset, uint value)
         {
             data[offset + 0] = (byte)(value & 0xFF);

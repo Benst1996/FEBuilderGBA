@@ -235,6 +235,9 @@ ROMを開く...(_O)
 :Open _Last ROM
 前回のROMを開く(_L)
 
+:Open _Decomp Project...
+デコンププロジェクトを開く...(_D)
+
 :_Recent Files
 最近のファイル(_R)
 
@@ -768,6 +771,12 @@ MIDIインポート
 
 :Select Instrument
 楽器選択
+
+:Select Instrument Set...
+楽器セット選択...
+
+:(use destination's current voicegroup)
+（インポート先の現在の音色セットを使用）
 
 :Import Wave
 波形インポート
@@ -1477,6 +1486,36 @@ Change ポインタ:
 
 :Chapter ID:
 ワープする章
+
+:Route:
+ルート
+
+:0x01 Prologue / Early:
+0x01 序盤
+
+:0x02 Eirika Route:
+0x02 エイリーク編
+
+:0x03 Ephraim Route:
+0x03 エフラム編
+
+:0xFF Unconditional:
+0xFF 無条件
+
+:Achievement Flag:
+達成フラグ
+
+:Killer Unit (0x01):
+殺害者 (0x01)
+
+:Unknown (0x0A):
+不明 (0x0A)
+
+:Unknown (0x0B):
+不明 (0x0B)
+
+:Unknown (0x0E):
+不明 (0x0E)
 
 :Chapter Image Ptr:
 章 画像 Ptr:
@@ -2470,6 +2509,12 @@ Linked 名前:
 
 :Load Other ROM
 別ROM読込
+
+:Auto Search
+自動探索
+
+:Cross-ROM auto-tracking: name search, LDR-map symmetry, and match-window retry against the loaded target ROM.
+ROM間自動追跡：読み込んだ対象ROMに対して、名前検索、LDRマップ対称性、一致ウィンドウ再試行を行います。
 
 :LDR Match\r\nAddress
 LDR一致\r\nアドレス
@@ -3805,6 +3850,18 @@ W36: 敵 phase BGM flag 4
 
 :Warning: Stat Bonuses pointer is null (P12=0). Consider allocating.
 警告: 能力ボーナス pointer is null (P12=0). Consider allocating.
+
+:New-alloc Stat Bonuses
+能力補正を新規に割り振る
+
+:New-alloc Effectiveness
+特効効果を新規に割り振る
+
+:Allocate a new Stat Bonuses (P12) block and write its pointer into this item (mirrors WF new-alloc).
+このアイテムに能力補正(P12)を新規に割り振り、そのポインタを書き込みます。
+
+:Allocate a new Effectiveness (P16) block and write its pointer into this item (mirrors WF new-alloc).
+このアイテムに特効効果(P16)を新規に割り振り、そのポインタを書き込みます。
 
 :Warning: Zero region (direct match)
 警告: 0地帯 (直接マッチ)
@@ -6729,6 +6786,9 @@ TSA
 :Failed to allocate new event-unit block.
 新規ユニット配置領域の確保に失敗しました。
 
+:Failed to allocate a new palette block. Check ROM free space.
+新規パレット領域の確保に失敗しました。ROMの空き容量を確認してください。
+
 :Allocated new event-unit block ({0} units) at 0x{1:X08}.
 新規ユニット配置領域({0}体)を 0x{1:X08} に確保しました。
 
@@ -7439,6 +7499,9 @@ Hex アドレス
 :Make Selected Class Independent
 選択クラスの分離独立
 
+:The list is empty. Separating an empty list has no effect. Make it independent anyway?
+リストが0件です。空のリストを分離させても意味がないのですが、それでも分離独立させますか？
+
 :Click here for level/skill details (opens wiki)
 習得レベルとスキルの詳細は、ここをクリックしてください。
 
@@ -7577,8 +7640,14 @@ OBJBGLeftToRight
 :Import Music File
 音楽をファイルから読み込む
 
-:Imports MIDI files (preview only). Full Import dispatch (MIDI / Wave / Instrument) pending Core extraction.
-MIDIファイルのインポート（プレビューのみ）。完全なインポートディスパッチ（MIDI / Wave / Instrument）はCoreの抽出待ちです。
+:Imports by file extension: a MIDI (.mid), a raw RIFF WAV (.wav, builds a one-track song that plays the sample), an instrument set (.instrument), or a SondFont source (.s, pick an instrument set then assemble).
+拡張子で判別してインポートします: MIDI（.mid）、生のRIFF WAV（.wav、サンプルを再生する1トラックの曲を作成）、楽器セット（.instrument）、またはSondFontソース（.s、楽器セットを選んでからアセンブル）。
+:Instrument Set Files
+楽器セットファイル
+:SondFont Source Files
+SondFontソースファイル
+:Music Files
+音楽ファイル
 
 :Export Music File
 音楽をファイルへ書き出す
@@ -7941,6 +8010,9 @@ ED関係
 :Include AI Hints
 AI用に登場人物のヒントを追加
 
+:Append unit translate-info hints (name/role/flags) for every face the text loads.
+テキストが読み込む全ての顔画像について、ユニットの翻訳情報（名前・役割・フラグ）のヒントを追加します。
+
 :Export Limit:
 エクスポート制限:
 
@@ -7952,6 +8024,30 @@ AI用に登場人物のヒントを追加
 
 :Add Reference
 参照情報の追加
+
+:Insert Escape Code
+エスケープコードの挿入
+
+:Jump to Portrait
+顔画像へジャンプ
+
+:(No portrait code in this text)
+(このテキストには顔画像コードがありません)
+
+:(Visiting character — no fixed portrait to jump to)
+(訪問キャラ — ジャンプ先の固定顔画像はありません)
+
+:(Invalid portrait id in this text)
+(このテキストの顔画像IDが不正です)
+
+:Select an escape code to insert
+挿入するエスケープコードを選択
+
+:Category
+カテゴリ
+
+:Escape Code
+エスケープコード
 
 :(out-of-scope)
 (範囲外)
@@ -7976,6 +8072,36 @@ AI用に登場人物のヒントを追加
 
 :Out-of-scope: requires UX review of SaaS-call disclaimer
 範囲外: SaaS 呼び出し免責事項の UX レビューが必要
+
+:Source language of the currently-selected text
+選択中のテキストの翻訳元言語
+
+:Target language to translate the selected text into
+選択中のテキストを翻訳する先の言語
+
+:Translate the selected text online; the result is placed in the Edit box for review before writing
+選択中のテキストをオンラインで翻訳します。結果は書き込み前に確認できるよう編集ボックスに表示されます
+
+:(No text to translate)
+(翻訳するテキストがありません)
+
+:(Select a source and target language)
+(翻訳元と翻訳先の言語を選択してください)
+
+:(Source and target language are the same)
+(翻訳元と翻訳先の言語が同じです)
+
+:Translating...
+翻訳中...
+
+:Translation failed: the service returned no result.
+翻訳に失敗しました: サービスから結果が返されませんでした。
+
+:Google translation returned an error. You may have sent too many requests.\r\n\r\n{0}
+Google翻訳がエラーを返しました。翻訳リクエストの送りすぎの可能性があります。\r\n\r\n{0}
+
+:Translation failed: {0}
+翻訳に失敗しました: {0}
 
 :Out-of-scope: requires UseTextIDCache.Update Core extraction
 範囲外: UseTextIDCache.Update Core 抽出が必要
@@ -8104,8 +8230,58 @@ Sappyを指定してください。\r\nSappyを設定すると、♪ボタンで
 :Configure Git (version control).\r\nGit is used to keep config/patch2 patch data up to date.\r\nInstalling it makes pulling the latest patches easy.
 Git（バージョン管理システム）を設定してください。\r\nGitはパッチデータ（config/patch2）の更新に使用されます。\r\nインストールすると、最新のパッチデータを簡単に取得できます。
 
-:Download requires WinForms host. Use Browse instead.
-ダウンロードはWinForms版のみ対応です。代わりに参照ボタンを使ってください。
+:Windows-only download — use Browse to set the path manually.
+自動ダウンロードはWindowsのみ対応です。参照ボタンでパスを手動設定してください。
+:Download
+ダウンロード
+:Downloading
+ダウンロード中
+:Downloaded: {0}
+ダウンロード完了: {0}
+:Downloaded {0} tool(s).
+{0}個のツールをダウンロードしました。
+:Download failed. Use Browse to set the path manually.
+ダウンロードに失敗しました。参照ボタンでパスを手動設定してください。
+:This will download an executable from:
+{0}
+
+The downloaded program will be placed under the app folder.
+
+Continue?
+次の場所から実行ファイルをダウンロードします:
+{0}
+
+ダウンロードしたプログラムはappフォルダに配置されます。
+
+続行しますか？
+:This will download executables for {0} from:
+次の場所から{0}の実行ファイルをダウンロードします:
+:The downloaded programs will be placed under the app folder.
+
+Continue?
+ダウンロードしたプログラムはappフォルダに配置されます。
+
+続行しますか？
+:Download and install Git
+Gitのダウンロードとインストール
+:This will download the official Git for Windows installer from:
+{0}
+
+It will RUN the installer, which may request administrator (UAC) elevation.
+
+Continue?
+次の場所から公式のGit for Windowsインストーラーをダウンロードします:
+{0}
+
+インストーラーを実行します。管理者権限(UAC)の昇格を求められる場合があります。
+
+続行しますか？
+:Git installed: {0}
+Gitをインストールしました: {0}
+:Git download/install failed. Use Browse to set the path manually.
+Gitのダウンロード/インストールに失敗しました。参照ボタンでパスを手動設定してください。
+:Git was installed but failed validation. Use Browse to set the path manually.
+Gitはインストールされましたが検証に失敗しました。参照ボタンでパスを手動設定してください。
 
 :Setup is complete. The wizard saved your tool paths and preferences.\r\n\r\nYou can change these at any time from Menu -> Options.\r\n\r\nPress Finish to close this wizard.
 設定が完了しました。ウィザードがツールパスと環境設定を保存しました。\r\n\r\nこれらは、メニュー -> 設定 から、いつでも変更できます。\r\n\r\n完了ボタンを押して、このウィザードを閉じてください。
@@ -8308,8 +8484,8 @@ REDO
 :Deferred KnownGap: Import requires the rendered sample bitmap (WinForms-coupled DrawBattleAnime via PaletteFormRef.MakePaletteBitmapToUIEx) (#399).
 保留中の既知ギャップ: Import は描画されたサンプルビットマップを必要とします (PaletteFormRef.MakePaletteBitmapToUIEx 経由の WinForms 依存 DrawBattleAnime) (#399)。
 
-:Deferred KnownGap: Export requires the rendered sample bitmap (WinForms-coupled DrawBattleAnime via ImageFormRef.ExportImage) (#399).
-保留中の既知ギャップ: Export は描画されたサンプルビットマップを必要とします (ImageFormRef.ExportImage 経由の WinForms 依存 DrawBattleAnime) (#399)。
+:Export the rendered battle-animation sample (360x290 grid) to a PNG file. Read-only — no ROM write. Enabled once a sample renders.
+描画されたバトルアニメサンプル (360x290 のグリッド) を PNG ファイルにエクスポートします。読み取り専用 — ROM への書き込みはありません。サンプルが描画されると有効になります。
 
 :Fit to window
 ウィンドウに合わせる
@@ -8323,8 +8499,8 @@ Core RunRedo API 未対応 - #500 で追跡中。
 :Palette Index
 パレットインデックス
 
-:Live bitmap preview pending Core extraction - tracked by #500.
-ライブビットマッププレビューは Core 抽出を待機中 - #500 で追跡中。
+:Live bitmap-of-the-graphic preview recolored by the grid colors (#1023).
+グリッドの色で再着色されたグラフィックのライブビットマッププレビュー (#1023)。
 
 :Edit R/G/B 0-248 (5-bit ticks)
 R/G/B を 0-248 で編集 (5ビット刻み)
@@ -8478,8 +8654,34 @@ tcs params??
 KnownGap: Core実装が未対応。
 :KnownGap: live bitmap preview pending Core extraction.
 KnownGap: ライブビットマッププレビューはCore実装待ち。
-:KnownGap: list-expand requires DataExpansionCore wiring not yet ported.
-KnownGap: リスト拡張はDataExpansionCoreの未移植配線が必要。
+:Grow the border table by N rows (ExpandTableTo + RepointAllReferences).
+国境テーブルをN行拡張します(ExpandTableTo + RepointAllReferences)。
+:Grow the icon-data table by N rows (ExpandTableTo + RepointAllReferences).
+アイコンデータテーブルをN行拡張します(ExpandTableTo + RepointAllReferences)。
+:Enter the new entry count for the world map border list (current: {0}, max: 255).
+ワールドマップ国境リストの新しいエントリ数を入力してください(現在: {0}, 最大: 255)。
+:Enter the new entry count for the world map icon-data list (current: {0}, max: 255).
+ワールドマップアイコンデータリストの新しいエントリ数を入力してください(現在: {0}, 最大: 255)。
+:Expanded world map border list to {0} entries.
+ワールドマップ国境リストを{0}エントリに拡張しました。
+:Expanded world map icon-data list to {0} entries.
+ワールドマップアイコンデータリストを{0}エントリに拡張しました。
+:Expand the magic-effect + CSA spell tables to 254 entries.
+魔法エフェクト + CSA魔法テーブルを254エントリに拡張します。
+:Expand the magic table? This grows the list to 254 entries.
+魔法テーブルを拡張してもよろしいですか？リストを254エントリに拡張します。
+:Expanded magic list to 254 entries.
+魔法リストを254エントリに拡張しました。
+:List expansion failed: {0}
+リストの拡張に失敗しました: {0}
+:CSASpellTable Not Found.
+CSA魔法テーブルが見つかりません。
+:New count ({0}) must be greater than the current count ({1}).
+新しい数({0})は現在の数({1})より大きくなければなりません。
+:ROM not loaded.
+ROMが読み込まれていません。
+:Table expansion failed.
+テーブルの拡張に失敗しました。
 :KnownGap: DecreaseColorTSAToolForm not yet ported.
 KnownGap: DecreaseColorTSAToolFormは未移植。
 :KnownGap: ResourceCache source-file feature not yet wired in Avalonia.
@@ -8782,8 +8984,8 @@ WF の N03 サブタブには固定の意味を持たない汎用 16 バイト (
 :Adds the effect of another skill (KnownGap: tracked by #374)
 他のスキルの効果を追加します (KnownGap: #374 で追跡中)
 
-:PatchManagerView does not yet expose JumpToSelectStruct (tracked by #374).
-PatchManagerView は JumpToSelectStruct をまだ公開していません (#374 で追跡中)。
+:Opens the Patch Manager and filters/selects the FE8N SKILL COMBAT ART patch. Struct-level row selection is a #374 follow-up.
+パッチマネージャーを開き、FE8N SKILL COMBAT ART パッチを絞り込んで選択します。構造体レベルの行選択は #374 のフォローアップです。
 
 :Move to COMBAT_ART
 COMBAT_ARTへ移動
@@ -9867,6 +10069,12 @@ ROMファイルを開いて難易度設定を編集してください。
 :Mouth crop
 口クロップ
 
+:Per-frame preview (96x80)
+フレームごとのプレビュー (96x80)
+
+:Live composite of the selected frame's eye/mouth crop onto the face. Auto-quantized source only — Share/Custom palette and Fuchidori are not reflected here (they change only the final import).
+選択したフレームの目/口クロップを顔に合成したライブプレビューです。自動減色したソースのみ表示します — パレット共有/カスタムパレットや縁取りはここには反映されません（それらは最終的なインポートのみを変更します）。
+
 :Frame (0-10):
 フレーム (0-10):
 
@@ -9908,3 +10116,672 @@ ROMファイルを開いて難易度設定を編集してください。
 
 :No instrument set selected
 楽器セットが選択されていません
+
+:KnownGap: border import (OAM assembly) is a separate follow-up.
+KnownGap: 国境インポート（OAMアセンブリ）は別のフォローアップです。
+
+:Export the border AP preview to PNG.
+国境APプレビューをPNGとして書き出します。
+
+:Import is a follow-up (#878 PR2).
+Importは後続タスクです（#878 PR2）。
+
+:Import CSA magic animation script
+CSAマジックアニメーションスクリプトをインポート
+
+:CSA magic animation imported successfully.
+CSAマジックアニメーションのインポートが完了しました。
+
+:CSA magic animation import failed: {0}
+CSAマジックアニメーションのインポートに失敗しました: {0}
+
+:CSA Creator magic-system not detected. Install the patch first.
+CSA Creatorのマジックシステムが検出されません。先にパッチをインストールしてください。
+
+:Import a CSA magic animation (.txt script + PNGs) into the selected slot.
+選択中のスロットにCSA魔法アニメ（.txtスクリプト + PNG）をインポートします。
+
+:Import a 16x16 skill icon (128 raw 4bpp bytes, in-place, undoable).
+16x16のスキルアイコン（128バイトの生4bpp、その場で上書き、取り消し可能）をインポートします。
+
+:Export the 16x16 skill icon as a PNG.
+16x16のスキルアイコンをPNGとしてエクスポートします。
+
+:Import a same-size image as the main tilesheet (palette and TSA are not changed).
+メイン画像のタイルシートに同じサイズの画像をインポートします（パレットとTSAは変更されません）。
+
+:Select a palette entry first.
+先にパレットエントリを選択してください。
+
+:Image service not initialized.
+画像サービスが初期化されていません。
+
+:The image must use 16 colors or fewer. Reduce its color count and try again.
+画像は16色以下である必要があります。色数を減らして再度お試しください。
+
+:Import failed:
+インポートに失敗しました:
+
+:Export Image to PNG file
+画像をPNGファイルにエクスポートします
+
+:Import Image from PNG file
+PNGファイルから画像をインポートします
+:No valid animation pointer to import into.
+インポート先の有効なアニメーションポインタがありません。
+
+:Import Skill Animation Script
+スキルアニメスクリプトをインポート
+
+:Skill Animation Script
+スキルアニメスクリプト
+
+:Cannot read script file: {0}
+スクリプトファイルを読み込めません: {0}
+
+:Skill animation import failed: {0}
+スキルアニメのインポートに失敗しました: {0}
+
+:Skill animation imported successfully.
+スキルアニメを正常にインポートしました。
+
+:Bulk Export Skill Config
+スキル設定を一括エクスポート
+
+:Skill Config TSV
+スキル設定TSV
+
+:Bulk export failed: {0}
+一括エクスポートに失敗しました: {0}
+
+:Bulk exported to: {0}
+一括エクスポートしました: {0}
+
+:Set ID
+IDを設定
+
+:Sub-list
+サブリスト
+
+:The FE8N Ver1 Class/Item/Other tabs are the SAME shared 16 ext-bytes (B16..B31) already edited on the Unit tab — not a separate per-skill array.
+FE8N Ver1 のクラス/アイテム/その他タブは、ユニットタブで既に編集できる同じ共有16拡張バイト (B16..B31) です — スキルごとの別配列ではありません。
+
+:WinForms shows them as 4 tabs of the same 16 bytes; Avalonia surfaces all 16 editable on the Unit tab. Edit them there (#930).
+WinForms では同じ16バイトを4つのタブで表示します。Avalonia はユニットタブで16個すべてを編集可能にしています。そこで編集してください (#930)。
+
+:The N03 sub-tab in WF holds 16 generic bytes (B16..B31) with no fixed semantics, shown there as unlabeled NumericUpDowns. Avalonia surfaces all 16 editable on the Unit tab; edit them there (#930).
+WF の N03 サブタブは固定的な意味を持たない16個の汎用バイト (B16..B31) を保持し、ラベルのない NumericUpDown として表示されます。Avalonia はユニットタブで16個すべてを編集可能にしています。そこで編集してください (#930)。
+
+:The editable per-skill sub-list arrays live in FE8N Ver2/Ver3 (Unit/Class/Item/Item2/Composite), not Ver1.
+編集可能なスキルごとのサブリスト配列は FE8N Ver2/Ver3 (ユニット/クラス/アイテム/アイテム2/複合) にあり、Ver1 にはありません。
+
+:Main (16-byte)
+メイン (16バイト)
+
+:Tutorial 1 - Lyn (12-byte)
+チュートリアル1 リン編 (12バイト)
+
+:Tutorial 2 - Eliwood (12-byte)
+チュートリアル2 エリウッド編 (12バイト)
+
+:Secondary (12-byte)
+セカンダリ (12バイト)
+
+
+:No map-change entry is selected. Select a map with change-data before importing.
+マップ変化エントリが選択されていません。インポートする前に変化データのあるマップを選択してください。
+
+:The selected record has zero width or height. Set the W/H fields and Write before importing.
+選択したレコードの幅または高さが0です。インポートする前にW/Hを設定して書き込んでください。
+
+:Enter the SOURCE change-data address to import from (W×H×2 = {0} bytes will be copied into this record).
+インポート元の変化データアドレスを入力してください(W×H×2 = {0}バイトがこのレコードにコピーされます)。
+
+:Imported change data into the selected record.
+選択したレコードに変化データをインポートしました。
+
+:Pointer import failed: {0}
+ポインタインポートに失敗しました: {0}
+
+:No map-change entry is selected. Select a map with change-data first.
+マップ変化エントリが選択されていません。先に変化データのあるマップを選択してください。
+
+:Cannot import: the selected record has zero width or height. Set the W/H fields first.
+インポートできません: 選択したレコードの幅または高さが0です。先にW/Hを設定してください。
+
+:Cannot import: the change region size ({0}×{1}) is out of range.
+インポートできません: 変化領域のサイズ({0}×{1})が範囲外です。
+
+:Cannot import: the source address (0x{0:X08}) is not a valid ROM address.
+インポートできません: インポート元アドレス(0x{0:X08})が有効なROMアドレスではありません。
+
+:Cannot import: the source data (0x{0:X08} + {1} bytes) runs past the end of the ROM.
+インポートできません: インポート元データ(0x{0:X08} + {1}バイト)がROMの末尾を超えています。
+
+:Cannot import: failed to read {0} bytes from the source address.
+インポートできません: インポート元アドレスから{0}バイトを読み込めませんでした。
+
+:Cannot import: ran out of ROM free space while writing the change data.
+インポートできません: 変化データの書き込み中にROMの空き領域が不足しました。
+
+:No ROM loaded.
+ROMが読み込まれていません。
+
+:This address is not inside a known struct data table, so it cannot be exported as TSV/CSV/EA.
+このアドレスは既知の構造体データテーブル内にないため、TSV/CSV/EA としてエクスポートできません。
+
+:This address is not inside a known struct data table, so it cannot be imported from TSV.
+このアドレスは既知の構造体データテーブル内にないため、TSV からインポートできません。
+
+:No struct definition for '{0}'.
+'{0}' の構造体定義がありません。
+
+:Export {0} {1}
+{0} を {1} でエクスポート
+
+:Exported {0} entries to {1}
+{0} 件を {1} にエクスポートしました。
+
+:No data to export.
+エクスポートするデータがありません。
+
+:Export failed: {0}
+エクスポートに失敗しました: {0}
+
+:Import {0} TSV
+{0} を TSV からインポート
+
+:TSV file has no data rows.
+TSVファイルにデータ行がありません。
+
+:Imported {0} entries from {1}
+{1} から {0} 件をインポートしました。
+
+:Import failed: {0}
+インポートに失敗しました: {0}
+
+:There is no AI script to export. Re-read the script first.
+エクスポートするAIスクリプトがありません。先にスクリプトを再読み込みしてください。
+
+:AI script exported to
+AIスクリプトをエクスポートしました:
+
+:No valid AI opcodes were found in the selected file.
+選択したファイルに有効なAIオペコードが見つかりませんでした。
+
+:Imported AI opcodes:
+インポートしたAIオペコード:
+
+:Press Write to save to ROM.
+書き込みボタンでROMに保存してください。
+
+:Re-read the AI script before importing.
+インポートする前にAIスクリプトを再読み込みしてください。
+
+:Copy the 16 palette entries to the clipboard as GBA 5-5-5 hex.
+16色のパレットをGBA 5-5-5 16進数としてクリップボードにコピーします。
+
+:Export the raw main tilesheet (LZ77-decompressed 4bpp tiles) as a PNG.
+メインタイルシート（LZ77展開した4bppタイル）をPNGとして取り出します。
+
+:Importing replaces the selected song: the converted MIDI is appended to ROM free space and the song-table entry is repointed at it. The change is a single undo step. Pick a destination song on the left, then browse a MIDI file and import.
+選択した曲を置き換えます。変換したMIDIをROMの空き領域に追加し、曲テーブルの項目をそこへ指し直します。操作は1回のアンドゥで取り消せます。左側で対象の曲を選び、MIDIファイルを参照して取り込んでください。
+
+:Import to ROM
+ROMに取り込む
+
+:Parse failed
+解析に失敗しました
+:Flags (W0):
+フラグ (W0):
+:Anime Type (W2):
+アニメタイプ (W2):
+:Image Pointer (P4):
+画像ポインタ (P4):
+:Frame Step:
+フレームステップ:
+:Full Sheet
+フルシート
+:Jump to Move Icon
+移動アイコンへジャンプ
+:Self Army
+自軍
+:Ally Army
+友軍
+:Enemy Army
+敵軍
+:Gray Army
+グレー
+:Four Army
+4軍
+
+:FE8N Ver1 has no icon import/export — WinForms SkillConfigFE8NSkillForm is render-only, and this variant's icon address lacks the 0x100 page offset v2/v3 use. Disabled by design (#1008).
+FE8N Ver1 にはアイコンのインポート/エクスポートがありません — WinForms の SkillConfigFE8NSkillForm は表示専用であり、このバリアントのアイコンアドレスには v2/v3 が使用する 0x100 ページオフセットがありません。設計上無効 (#1008)。
+
+:FE8N Ver1 has no animation pointer or animation I/O in WinForms (render-only). Disabled by design (#1008).
+FE8N Ver1 には WinForms でアニメーションポインタやアニメーションI/Oがありません（表示専用）。設計上無効 (#1008)。
+
+:Bulk Import/Export is not available for the C-SkillSys variant (unimplemented in WinForms too).
+一括インポート/エクスポートはC-SkillSys版では使用できません（WinForms版でも未実装）。
+
+:List expansion is not yet implemented for the skill-config tables (multi-table / multi-pointer per patch variant).
+スキル設定テーブルのリスト拡張はまだ実装されていません（パッチ版ごとにマルチテーブル/マルチポインタ構造のため）。
+
+:Sappy emulator playback is Windows-only (user32 P/Invoke); use the WinForms version of FEBuilderGBA.
+Sappy エミュレータ再生は Windows 専用です（user32 P/Invoke）。WinForms 版の FEBuilderGBA をご利用ください。
+
+:Wave/instrument export/import is a planned cross-platform enhancement (needs the SongUtil DirectSound port) — tracked by #1057.
+波形/楽器のエクスポート/インポートはクロスプラットフォーム対応の予定機能です（SongUtil の DirectSound 移植が必要） — #1057 で管理。
+
+:Pending Core alloc+repoint / DataExpansionCore wiring — tracked separately
+Core の alloc+repoint / DataExpansionCore の配線待ち — 別途追跡します
+
+:Allocate a fresh palette block in free space and repoint this slot's P12
+空き容量に新しいパレット領域を確保し、このスロットの P12 を貼り直します
+
+:Actual size
+等倍
+
+:Cell X
+セル X
+
+:Cell Y
+セル Y
+
+:Tile ID
+タイル ID
+
+:H-Flip
+左右反転
+
+:V-Flip
+上下反転
+
+:Palette Bank
+パレットバンク
+
+:Apply to Cell
+セルに適用
+
+:TSA Cell
+TSA セル
+
+:Per-cell editing supports non-header TSA only — header-TSA editing tracked separately.
+セル単位の編集は非ヘッダ TSA のみ対応 — ヘッダ TSA の編集は別途対応予定です。
+
+:After Coordinate Move Path (FE8)
+配置後の移動座標 (FE8)
+
+:Add Coord
+座標を追加
+
+:Remove Coord
+座標を削除
+
+:Row 0 is the start position (X/Y/Ext persist to W4). Rows 1+ are the move-path steps.
+行0は開始位置（X/Y/ExtはW4に保存）。行1以降は移動経路のステップです。
+
+:The after-coord list must contain at least the start row.
+移動座標リストには少なくとも開始行が必要です。
+
+:Too many after-coords: {0} (max {1}).
+移動座標が多すぎます: {0} (最大 {1})。
+
+:The event-unit block address is out of range.
+イベントユニットブロックのアドレスが範囲外です。
+
+:Failed to write after-coords. Check ROM free space.
+移動座標の書き込みに失敗しました。ROMの空き容量を確認してください。
+
+:After-coord write failed: {0}
+移動座標の書き込みに失敗しました: {0}
+
+:UnitId
+ユニットID
+
+:Unk1
+不明1
+
+:Unk2
+不明2
+
+:Wait
+待機
+
+:TSA Address:
+TSAアドレス:
+
+:TSA Type:
+TSAタイプ:
+
+:(4bpp + LZ77 image)
+(4bpp + LZ77画像)
+
+:None
+なし
+
+:Compressed
+圧縮
+
+:Compressed Header
+圧縮ヘッダ
+
+:Raw Header
+無圧縮ヘッダ
+
+:Raw
+無圧縮
+
+:Expand the unit-palette list to a specified entry count
+ユニットパレットリストを指定したエントリ数まで拡張します
+
+:Cannot expand: the unit-palette list has no rows.
+拡張できません: ユニットパレットリストに行がありません。
+
+:Enter the new entry count for the unit-palette list (current: {0}, max: 512).
+ユニットパレットリストの新しいエントリ数を入力してください (現在: {0}, 最大: 512)。
+
+:Expanded unit-palette list to {0} entries.
+ユニットパレットリストを{0}エントリに拡張しました。
+
+:Unit palette table not found in this ROM.
+このROMにユニットパレットテーブルが見つかりません。
+
+:Unit palette table pointer is invalid.
+ユニットパレットテーブルのポインタが無効です。
+
+:New count ({0}) exceeds the maximum of 512.
+新しい数({0})が最大値512を超えています。
+
+:Cannot expand: no non-empty template row was found.
+拡張できません: 空でないテンプレート行が見つかりませんでした。
+
+:Load a ROM first.
+先にROMを読み込んでください。
+
+:No change: new count equals current count.
+変更なし: 新しい数が現在の数と同じです。
+
+:New count ({0}) must be greater than or equal to current count ({1}).
+新しい数({0})は現在の数({1})以上である必要があります。
+
+:Export this DirectSound instrument's GBA sample to a WAV file.
+この DirectSound 楽器の GBA サンプルを WAV ファイルに書き出します。
+
+:Import a WAV file as this DirectSound instrument's GBA sample (appends to free space and repoints).
+WAV ファイルをこの DirectSound 楽器の GBA サンプルとして読み込みます（空き領域に追記してポインタを張り替えます）。
+
+:Export Wave
+波形の書き出し
+
+:Wave Files
+Wave ファイル
+
+:This instrument is not a DirectSound voice; there is no wave sample to export.
+この楽器は DirectSound ボイスではありません。書き出す波形サンプルがありません。
+
+:Could not decode the DirectSound sample. The wave pointer may be invalid.
+DirectSound サンプルをデコードできませんでした。波形ポインタが無効である可能性があります。
+
+:This instrument is not a DirectSound voice; a wave sample cannot be imported here.
+この楽器は DirectSound ボイスではありません。ここに波形サンプルを読み込むことはできません。
+
+:Wave import failed.
+波形の読み込みに失敗しました。
+
+:Wave import failed: {0}
+波形の読み込みに失敗しました: {0}
+
+:Voice
+ボイス
+
+:Target Voice
+変更先ボイス
+
+:Reassign every instrument voice used across all tracks of this song. Set a new target voice for each row, then Apply.
+この曲の全トラックで使われている楽器ボイスを一括変更します。各行に変更先ボイスを設定して「適用」を押してください。
+
+:Note: Volume / Pan / Tempo bulk changes are not yet ported (voice reassignment only).
+注意: 音量 / パン / テンポの一括変更はまだ移植されていません(ボイス変更のみ)。
+
+:Reduce an image to GBA palettes (16 colors x N banks) for import.
+GBAパレット(16色×Nバンク)に減色してインポートできるようにします。
+
+:Input file:
+入力ファイル:
+
+:Output file:
+出力ファイル:
+
+:Method:
+方式:
+
+:Margin (Yohaku):
+余白(よはく):
+
+:Palette banks:
+パレットバンク数:
+
+:Size method:
+サイズ方式:
+
+:Reserve 1st color:
+先頭色を予約:
+
+:Ignore TSA (single flat palette)
+TSAを無視(単一パレット)
+
+:Reduce Colors
+減色する
+
+:Select a PNG, BMP or JPG file
+PNG・BMP・JPGファイルを選択
+
+:Select where to save the reduced PNG
+減色後のPNGの保存先を選択
+
+:0: Manual (no preset)
+0: 手動(プリセットなし)
+
+:1: BG & CG
+1: 背景とCG
+
+:2: Battle BG
+2: 戦闘背景
+
+:3: World Map (large)
+3: ワールドマップ(でかい)
+
+:4: World Map (event)
+4: ワールドマップ(イベント用)
+
+:5: 256-color no-TSA
+5: TSAを利用しない256色
+
+:6: Status screen BG (FE8)
+6: ステータス画面背景(FE8)
+
+:7: Single-image map chips
+7: 一枚絵マップチップ
+
+:8: Single-image map chips (10 colors)
+8: 一枚絵マップチップ 10色
+
+:9: BG 256-color no-TSA (cutscene)
+9: TSAを利用しないBG256色(カットシーン)
+
+:A: BG 224-color no-TSA (talk)
+A: TSAを利用しないBG224色(会話用)
+
+:Resize (crop/pad)
+リサイズ(切り抜き/余白)
+
+:Scale
+拡大縮小
+
+:Yes
+はい
+
+:Images
+画像
+
+:Please select a file to open.
+開くファイル名を選択してください
+
+:Please select a file name to save.
+保存するファイル名を選択してください
+
+:Color reduction complete:
+減色が完了しました:
+
+:Please select a valid input and output file.
+有効な入力ファイルと出力ファイルを選択してください。
+
+:Color reduction failed. See the log for details.
+減色に失敗しました。詳細はログを確認してください。
+
+:Reducing colors...
+減色中...
+:Export the whole instrument set (voicegroup) to a TSV index plus per-voice side files (recursive).
+楽器セット(ボイスグループ)全体を、TSVインデックスとボイスごとのサイドファイルに書き出します(再帰的)。
+:Import a whole instrument set (voicegroup) from a TSV index plus its per-voice side files (recursive), appended to free space and repointed.
+楽器セット(ボイスグループ)全体を、TSVインデックスとボイスごとのサイドファイルから読み込み(再帰的)、空き領域に追記して参照を貼り直します。
+:No instrument set (voicegroup) is loaded to export.
+書き出す楽器セット(ボイスグループ)が読み込まれていません。
+:Instrument set exported to {0}
+楽器セットを {0} に書き出しました。
+:Instrument set export failed: {0}
+楽器セットの書き出しに失敗しました: {0}
+:Export the main field-map preview to PNG.
+メインフィールドマッププレビューをPNGとして書き出します。
+:Import a 240x160 event image (auto-reduced to World Map (event) / 4 palettes).
+240x160のイベント画像をインポートします（ワールドマップ(イベント用)/4パレットへ自動減色）。
+:Import a county border image (assembles OAM/AP). Requires a companion _NAME image in the same folder.
+国境画像をインポートします(OAM/APを組み立てます)。同じフォルダに_NAMEのコンパニオン画像が必要です。
+
+:Reassign every instrument voice used across all tracks of this song, and/or nudge the song-wide Volume, Pan, and Tempo. Set the targets/deltas, then Apply.
+この曲の全トラックで使用されている楽器ボイスを再割り当てし、曲全体の音量・パン・テンポを微調整します。対象や増減値を設定してから「適用」してください。
+
+:Reassign the instrument voices used by this track, and/or nudge its Volume and Pan. Set the targets/deltas, then Apply.
+このトラックで使用されている楽器ボイスを再割り当てし、音量とパンを微調整します。対象や増減値を設定してから「適用」してください。
+
+:Volume delta:
+音量の増減:
+
+:Pan delta:
+パンの増減:
+
+:Tempo delta:
+テンポの増減:
+
+:Also nudge note velocities by Volume delta
+音量の増減でノートのベロシティも調整する
+
+:No track changes to apply.
+適用するトラックの変更がありません。
+
+:Track changes applied.
+トラックの変更を適用しました。
+
+:Apply failed: {0}
+適用に失敗しました: {0}
+
+:Filter the TSV export to a single text category (WF parity).
+TSVエクスポートを単一のテキストカテゴリにフィルタリングします（WF互換）。
+
+
+:Transplant a song from another ROM into the current ROM. Open a donor ROM, select a song from each side, then Convert.
+別のROMから現在のROMへ曲を移植します。提供元のROMを開き、両側から曲を選択して「変換」してください。
+
+:Open Other ROM...
+別のROMを開く...
+
+:Other ROM: (none loaded)
+別のROM: (未読み込み)
+
+:Current ROM Songs (destination)
+現在のROMの曲 (移植先)
+
+:Other ROM Songs (source)
+別のROMの曲 (移植元)
+
+:Convert (transplant ->)
+変換 (移植 ->)
+
+:Other ROM: {0} ({1} songs)
+別のROM: {0} ({1} 曲)
+
+:Transplant completed, but some instrument data was corrupt and only the recognized parts were imported.
+移植は完了しましたが、一部の楽器データが壊れていたため、認識できた部分のみをインポートしました。
+
+:Open Decomp Project
+デコンププロジェクトを開く
+
+:Decomp Project
+デコンププロジェクト
+
+:Decomp Build
+デコンプビルド
+
+:Build
+ビルド
+
+:Build & Reload
+ビルドして再読み込み
+
+:Building...
+ビルド中...
+
+:Run build command?
+ビルドコマンドを実行しますか？
+
+:Working directory:
+作業ディレクトリ:
+
+:Failed to reload built ROM after build.
+ビルドしたROMの再読み込みに失敗しました。
+
+:Preview may be stale — rebuild
+プレビューが古い可能性があります — 再ビルドしてください
+
+: · needs rebuild
+ ・要再ビルド
+
+:Project has not opted into FEBuilder-managed builds. Add a build section to febuilder.project.json.
+このプロジェクトはFEBuilder管理のビルドを有効にしていません。febuilder.project.jsonにbuildセクションを追加してください。
+
+:Source-backed project · ROM is a build preview
+ソースベースのプロジェクト・ROMはビルドのプレビューです
+
+:Not a decomp project directory.
+デコンププロジェクトのディレクトリではありません。
+
+:Project found but no built ROM — run the build first, then reload.
+プロジェクトは見つかりましたが、ビルド済みROMがありません。先にビルドを実行してから再読み込みしてください。
+
+:This is a source-backed decomp project. The built ROM is a preview and cannot be saved over. Edit the source and rebuild instead.
+これはソースベースのデコンププロジェクトです。ビルド済みROMはプレビューであり、上書き保存できません。ソースを編集して再ビルドしてください。
+
+:This unit is ROM-only in decomp mode. Edit the source manually and rebuild.
+このユニットはデコンプモードではROM専用です。ソースを手動で編集して再ビルドしてください。
+
+:This class is ROM-only in decomp mode. Edit the source manually and rebuild.
+このクラスはデコンプモードではROM専用です。ソースを手動で編集して再ビルドしてください。
+
+:Unit source updated. Project needs rebuild.
+ユニットのソースを更新しました。プロジェクトの再ビルドが必要です。
+
+:Class source updated. Project needs rebuild.
+クラスのソースを更新しました。プロジェクトの再ビルドが必要です。
+
+:This unit table is ROM-only in decomp mode.
+このユニットテーブルはデコンプモードではROM専用です。
+
+:This class table is ROM-only in decomp mode.
+このクラステーブルはデコンプモードではROM専用です。
+
+:No change needed — the source already matches.
+変更は不要です。ソースは既に一致しています。
+
+:Failed to open decomp project:
+デコンププロジェクトを開けませんでした:

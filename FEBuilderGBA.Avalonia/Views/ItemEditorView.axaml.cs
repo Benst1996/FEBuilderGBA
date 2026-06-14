@@ -358,9 +358,12 @@ namespace FEBuilderGBA.Avalonia.Views
             ShopSellPriceLabel.Text = _vm.ShopSellPrice.ToString();
             ShopForgePriceLabel.Text = _vm.ShopForgePrice.ToString();
 
-            // Null pointer warnings
-            AllocStatBonusesWarning.IsVisible = _vm.ShowAllocStatBonuses;
-            AllocEffectivenessWarning.IsVisible = _vm.ShowAllocEffectiveness;
+            // Null pointer warnings + new-alloc buttons (#831). The whole row
+            // (warning label + New-alloc button) shows only when the field
+            // pointer is 0 and the item index > 0, matching the WF visibility
+            // gate (UpdateStateByAllocEvent).
+            AllocStatBonusesRow.IsVisible = _vm.ShowAllocStatBonuses;
+            AllocEffectivenessRow.IsVisible = _vm.ShowAllocEffectiveness;
 
             // Effective class list
             EffectiveClassBorder.IsVisible = _vm.HasEffectiveClasses;
@@ -380,6 +383,10 @@ namespace FEBuilderGBA.Avalonia.Views
                 BonusLckLabel.Text = $"Lck: {_vm.BonusLck:+#;-#;0}";
                 BonusMoveLabel.Text = $"Move: {_vm.BonusMove:+#;-#;0}";
                 BonusConLabel.Text = $"Con: {_vm.BonusCon:+#;-#;0}";
+                // MagicSplit magic bonus (WF MagicExtUnitBase) — shown only on
+                // FE7U/FE8U MagicSplit ROMs; hidden on vanilla/FE8N/FE6.
+                BonusMagLabel.Text = $"Mag: {_vm.BonusMag:+#;-#;0}";
+                BonusMagLabel.IsVisible = _vm.HasMagicBonus;
             }
         }
 
@@ -450,6 +457,19 @@ namespace FEBuilderGBA.Avalonia.Views
             _vm.RecalcComputed();
             UpdateComputedUI();
 
+            // #1132: in decomp mode, structured-table edits are source-backed. Route
+            // the "items" table to the C-source writer instead of the preview ROM.
+            // The classic (!IsDecompMode) ROM-write path below is byte-for-byte unchanged.
+            if (CoreState.IsDecompMode)
+            {
+                if (TryWriteItemSource())
+                    return;
+                // No owner at all for the items table → genuinely ROM-only. Do NOT
+                // silently write the preview ROM; tell the user, then stop.
+                CoreState.Services.ShowInfo(R._("This item is ROM-only in decomp mode. Edit the source manually and rebuild."));
+                return;
+            }
+
             _undoService.Begin(R._("Edit Item"));
             try
             {
@@ -463,6 +483,127 @@ namespace FEBuilderGBA.Avalonia.Views
             {
                 _undoService.Rollback();
                 Log.Error("Write failed: {0}", ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// #1132: attempt a source-backed write of the current item. Returns true when
+        /// the items table HAS a source owner (so the write was attempted and an
+        /// accurate, status-specific message was shown — success, no-change, romOnly,
+        /// manual, json, or an error). Returns false ONLY when there is no owner at all,
+        /// so the caller shows the generic ROM-only notice (never a silent ROM write).
+        /// </summary>
+        bool TryWriteItemSource()
+        {
+            var project = CoreState.DecompProject;
+            var owner = project?.TryGetTableOwner("items");
+            if (owner == null)
+                return false;   // genuinely no owner → caller shows generic ROM-only
+
+            // Intersect the candidate field dict with the owner's declared fields so a
+            // field the manifest doesn't declare is dropped (no UnsupportedField error).
+            var declared = new HashSet<string>(StringComparer.Ordinal);
+            if (owner.Fields != null)
+                foreach (var f in owner.Fields)
+                    if (f != null && !string.IsNullOrEmpty(f.Name))
+                        declared.Add(f.Name);
+
+            var changed = new Dictionary<string, uint>(StringComparer.Ordinal);
+            foreach (var kv in _vm.BuildSourceFieldDict())
+                if (declared.Contains(kv.Key))
+                    changed[kv.Key] = kv.Value;
+
+            // Always call the writer and branch on its typed status so the user sees an
+            // ACCURATE message (the writer returns the right message for romOnly /
+            // manual / json / not-owned, rather than a generic "ROM-only" string).
+            var res = DecompSourceWriterCore.WriteTableEntry(
+                project, "items", _vm.CurrentItemIndex, changed);
+
+            switch (res.Status)
+            {
+                case DecompSourceWriteStatus.Ok:
+                    _vm.MarkClean();
+                    // Re-baseline the dirty snapshot to the just-written values so an
+                    // immediate re-Save is a no-op (and never re-clobbers from stale ROM).
+                    _vm.RefreshSourceFieldSnapshot();
+                    UpdateWarnings();
+                    // ChangedFields empty ⇒ a no-op (value already matched) — don't
+                    // claim a rebuild is needed.
+                    if (res.ChangedFields != null && res.ChangedFields.Count > 0)
+                        CoreState.Services.ShowInfo(R._("Item source updated. Project needs rebuild."));
+                    else
+                        CoreState.Services.ShowInfo(R._("No change needed — the source already matches."));
+                    break;
+                case DecompSourceWriteStatus.RomOnly:
+                    CoreState.Services.ShowInfo(R._("This item table is ROM-only in decomp mode."));
+                    break;
+                case DecompSourceWriteStatus.Manual:
+                    // Covers writePolicy=manual AND format=json (the writer returns the
+                    // accurate per-case message — use it verbatim).
+                    CoreState.Services.ShowInfo(res.Message);
+                    break;
+                default:
+                    CoreState.Services.ShowError(res.Message);
+                    break;
+            }
+            return true;
+        }
+
+        // #831: new-alloc the StatBooster (P12) block — mirrors WF
+        // L_12_NEWALLOC_ITEMSTATBOOSTER (InputFormRef.AllocEvent). Opens one
+        // undo scope (UndoService.Begin → ROM.BeginUndoScope) so the block-write
+        // + the pointer-write commit/rollback as a single transaction, then
+        // refreshes the pointer box + the warning rows.
+        void AllocStatBonuses_Click(object? sender, RoutedEventArgs e)
+        {
+            _undoService.Begin(R._("New-alloc Stat Bonuses"));
+            try
+            {
+                bool ok = _vm.AllocStatBonuses(_undoService.GetActiveUndoData());
+                if (ok)
+                {
+                    _undoService.Commit();
+                    StatBonusesPtrBox.Text = $"0x{_vm.StatBonusesPtr:X08}";
+                    UpdateComputedUI();
+                }
+                else
+                {
+                    _undoService.Rollback();
+                }
+            }
+            catch (Exception ex)
+            {
+                _undoService.Rollback();
+                Log.Error("AllocStatBonuses failed: {0}", ex.Message);
+            }
+        }
+
+        // #831: new-alloc the Effectiveness (P16) block — mirrors WF
+        // L_16_NEWALLOC_EFFECTIVENESS. The patch-conditional template variant is
+        // selected via PatchDetectionService.SkillSystemsClassTypeRework
+        // (== WF PatchUtil.SearchClassType() == SkillSystems_Rework).
+        void AllocEffectiveness_Click(object? sender, RoutedEventArgs e)
+        {
+            _undoService.Begin(R._("New-alloc Effectiveness"));
+            try
+            {
+                bool rework = PatchDetectionService.Instance.SkillSystemsClassTypeRework;
+                bool ok = _vm.AllocEffectiveness(rework, _undoService.GetActiveUndoData());
+                if (ok)
+                {
+                    _undoService.Commit();
+                    EffectivenessPtrBox.Text = $"0x{_vm.EffectivenessPtr:X08}";
+                    UpdateComputedUI();
+                }
+                else
+                {
+                    _undoService.Rollback();
+                }
+            }
+            catch (Exception ex)
+            {
+                _undoService.Rollback();
+                Log.Error("AllocEffectiveness failed: {0}", ex.Message);
             }
         }
 

@@ -11,8 +11,8 @@
       <StackPanel Spacing="8" Margin="8">
         <TextBlock Text="Unit Palette Editor" FontSize="18" FontWeight="Bold" />
 
-        <!-- Header row: Address bar caption + Write caption -->
-        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" RowDefinitions="Auto">
+        <!-- Header row: Address bar caption + selected-address -->
+        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto" RowDefinitions="Auto">
           <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_Address_Label"
                      Grid.Row="0" Grid.Column="0" Text="Address" VerticalAlignment="Center" Margin="0,0,8,0" />
           <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_Addr_Label"
@@ -22,8 +22,6 @@
                      Grid.Row="0" Grid.Column="2" Text="Selected Address:" VerticalAlignment="Center" Margin="0,0,8,0" />
           <TextBox AutomationProperties.AutomationId="ImageUnitPalette_SelectedAddress_Input"
                    Grid.Row="0" Grid.Column="3" Name="SelectedAddressBox" Width="120" IsReadOnly="True" Margin="0,0,16,0" />
-          <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_Write_Label"
-                     Grid.Row="0" Grid.Column="4" Text="Write" VerticalAlignment="Center" />
         </Grid>
 
         <TabControl AutomationProperties.AutomationId="ImageUnitPalette_Main_TabControl" Name="MainTabs">
@@ -96,36 +94,59 @@
                          Name="PalettePointerBox" Width="160" HorizontalAlignment="Left" />
 
                 <Button AutomationProperties.AutomationId="ImageUnitPalette_NewAlloc_Button"
-                        Content="New Palette Allocation" Margin="0,4,0,0" IsEnabled="False"
-                        ToolTip.Tip="KnownGap" />
+                        Content="New Palette Allocation" Margin="0,4,0,0" Click="NewAlloc_Click"
+                        ToolTip.Tip="Allocate a fresh palette block in free space and repoint this slot's P12" />
 
                 <Button AutomationProperties.AutomationId="ImageUnitPalette_Write_Button"
                         Content="Write" Name="WriteButton" Click="Write_Click" Margin="0,8,0,0" />
               </StackPanel>
 
-              <!-- Right half: class-uses meta panel + battle-anime preview placeholder -->
+              <!-- Right half: class selector + battle-anime sample preview (#840),
+                   rendered with the UNIT palette being edited (palette-override). -->
               <StackPanel Grid.Column="1" Spacing="6">
                 <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_UnitClassAndAnime_Label"
                            Text="Class and Animation" FontWeight="SemiBold" />
+
+                <!-- Class selector: drives GetAnimeIDByClassID -> sample preview -->
+                <Grid ColumnDefinitions="Auto,120,*" RowDefinitions="Auto">
+                  <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_Class_Label"
+                             Grid.Column="0" Text="Class:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                  <NumericUpDown AutomationProperties.AutomationId="ImageUnitPalette_Class_Input"
+                                 Grid.Column="1" Name="ClassBox" FormatString="0" Minimum="0" Maximum="65535" />
+                  <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_ClassName_Label"
+                             Grid.Column="2" Name="ClassNameLabel" VerticalAlignment="Center" Margin="8,0,0,0" />
+                </Grid>
+
+                <!-- Sub-palette (palette-type) selector for the preview (SwapPalette) -->
+                <Grid ColumnDefinitions="Auto,160" RowDefinitions="Auto" Margin="0,2,0,0">
+                  <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_PreviewPaletteType_Label"
+                             Grid.Column="0" Text="Palette Type:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                  <ComboBox AutomationProperties.AutomationId="ImageUnitPalette_PreviewPaletteType_Combo"
+                            Grid.Column="1" Name="PreviewPaletteTypeCombo" Width="160" SelectedIndex="0">
+                    <ComboBoxItem>Player</ComboBoxItem>
+                    <ComboBoxItem>Enemy</ComboBoxItem>
+                    <ComboBoxItem>Other</ComboBoxItem>
+                    <ComboBoxItem>4th Army</ComboBoxItem>
+                  </ComboBox>
+                </Grid>
+
+                <!-- Resolved battle-anime ID (read-only, informational) -->
+                <Grid ColumnDefinitions="Auto,120" RowDefinitions="Auto">
+                  <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_BattleAnime_Label"
+                             Grid.Column="0" Text="Battle Animation:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                  <TextBox AutomationProperties.AutomationId="ImageUnitPalette_BattleAnime_Input"
+                           Grid.Column="1" Name="BattleAnimeBox" Width="120" IsReadOnly="True" />
+                </Grid>
+
+                <!-- The composited 12-cell battle-anime sample, rendered with the
+                     selected unit palette (#840 / reuses #822 RenderSampleBattleAnime). -->
                 <Border Background="{DynamicResource SubtlePanelBackgroundBrush}"
                         BorderBrush="{DynamicResource SubtlePanelBorderBrush}"
-                        BorderThickness="1" CornerRadius="4" Padding="8" MinHeight="120">
-                  <TextBlock Text="[KnownGap: class-uses list requires ImageBattleAnimeForm.GetAnimeIDByClassID Core port.]"
-                             Foreground="Gray" TextWrapping="Wrap" />
-                </Border>
-
-                <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_BattleAnime_Label"
-                           Text="Battle Animation:" Margin="0,4,0,0" />
-                <NumericUpDown AutomationProperties.AutomationId="ImageUnitPalette_BattleAnime_Input"
-                               Name="BattleAnimeBox" FormatString="0" Minimum="0" Maximum="65535"
-                               Width="120" HorizontalAlignment="Left" IsEnabled="False"
-                               ToolTip.Tip="KnownGap" />
-
-                <Border Background="{DynamicResource SubtlePanelBackgroundBrush}"
-                        BorderBrush="{DynamicResource SubtlePanelBorderBrush}"
-                        BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,8,0,0" MinHeight="80">
-                  <TextBlock Text="[Battle-anime preview placeholder: requires DrawBattleAnime Core extraction.]"
-                             Foreground="Gray" TextWrapping="Wrap" />
+                        BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,8,0,0" MinHeight="120">
+                  <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                    <controls:GbaImageControl AutomationProperties.AutomationId="ImageUnitPalette_SamplePreview_Image"
+                                              Name="SamplePreview" />
+                  </ScrollViewer>
                 </Border>
               </StackPanel>
             </Grid>
@@ -159,27 +180,21 @@
               <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto" Margin="0,4,0,0">
                 <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_Zoom_Label"
                            Grid.Column="0" Text="Zoom:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <!-- #1006: items populated in code-behind via R._() (ComboBoxItem
+                     content is not localized by ViewTranslationHelper) — see the ctor. -->
                 <ComboBox AutomationProperties.AutomationId="ImageUnitPalette_Zoom_Combo"
-                          Grid.Column="1" Name="ZoomCombo" Width="200" SelectedIndex="0" IsEnabled="False"
-                          ToolTip.Tip="KnownGap">
-                  <ComboBoxItem>Fit window</ComboBoxItem>
-                  <ComboBoxItem>Actual size</ComboBoxItem>
-                  <ComboBoxItem>2x</ComboBoxItem>
-                  <ComboBoxItem>3x</ComboBoxItem>
-                  <ComboBoxItem>4x</ComboBoxItem>
-                </ComboBox>
+                          Grid.Column="1" Name="ZoomCombo" Width="200"
+                          SelectionChanged="Zoom_SelectionChanged" />
               </Grid>
 
               <!-- Palette grid: 16 swatches in a 4x4 visual grid -->
               <Grid ColumnDefinitions="*,*,*,*" Margin="0,8,0,0">
                 <!-- Column 1: indices 1-4 -->
                 <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
-                  <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,Auto,40,60,60,60">
-                    <TextBlock Grid.Column="0" Text=" " />
-                    <TextBlock Grid.Column="4" Text=" " />
-                    <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_R_Header_Label" Grid.Column="5" Text="R" HorizontalAlignment="Center" FontWeight="SemiBold" />
-                    <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_G_Header_Label" Grid.Column="6" Text="G" HorizontalAlignment="Center" FontWeight="SemiBold" />
-                    <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_B_Header_Label" Grid.Column="7" Text="B" HorizontalAlignment="Center" FontWeight="SemiBold" />
+                  <Grid Grid.Row="0" ColumnDefinitions="30,40,60,60,60">
+                    <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_R_Header_Label" Grid.Column="2" Text="R" HorizontalAlignment="Center" FontWeight="SemiBold" />
+                    <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_G_Header_Label" Grid.Column="3" Text="G" HorizontalAlignment="Center" FontWeight="SemiBold" />
+                    <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_B_Header_Label" Grid.Column="4" Text="B" HorizontalAlignment="Center" FontWeight="SemiBold" />
                   </Grid>
                   <Grid Grid.Row="1" ColumnDefinitions="30,40,60,60,60" Margin="0,2">
                     <TextBlock AutomationProperties.AutomationId="ImageUnitPalette_Index1_Label" Grid.Column="0" Text="1" VerticalAlignment="Center" />
@@ -321,20 +336,15 @@
                 <Button AutomationProperties.AutomationId="ImageUnitPalette_PaletteWrite_Button"
                         Content="Palette Write" Name="PaletteWriteButton" Click="PaletteWrite_Click" />
                 <Button AutomationProperties.AutomationId="ImageUnitPalette_Clipboard_Button"
-                        Content="Clipboard" IsEnabled="False"
-                        ToolTip.Tip="KnownGap" />
+                        Content="Clipboard" Name="ClipboardButton" Click="Clipboard_Click" />
                 <Button AutomationProperties.AutomationId="ImageUnitPalette_Export_Button"
-                        Content="Export Image" IsEnabled="False"
-                        ToolTip.Tip="KnownGap" />
+                        Content="Export Image" Name="ExportImageButton" Click="ExportImage_Click" />
                 <Button AutomationProperties.AutomationId="ImageUnitPalette_Import_Button"
-                        Content="Import Image" IsEnabled="False"
-                        ToolTip.Tip="KnownGap" />
+                        Content="Import Image" Name="ImportImageButton" Click="ImportImage_Click" />
                 <Button AutomationProperties.AutomationId="ImageUnitPalette_UNDO_Button"
-                        Content="UNDO" IsEnabled="False"
-                        ToolTip.Tip="KnownGap" />
+                        Content="UNDO" Name="UndoButton" Click="Undo_Click" />
                 <Button AutomationProperties.AutomationId="ImageUnitPalette_REDO_Button"
-                        Content="REDO" IsEnabled="False"
-                        ToolTip.Tip="KnownGap" />
+                        Content="REDO" Name="RedoButton" Click="Redo_Click" />
               </StackPanel>
             </StackPanel>
           </TabItem>
@@ -366,8 +376,8 @@
                 <Button AutomationProperties.AutomationId="ImageUnitPalette_Reload_Button"
                         Content="Reload List" Click="Reload_Click" />
                 <Button AutomationProperties.AutomationId="ImageUnitPalette_Expand_Button"
-                        Content="Expand List" IsEnabled="False"
-                        ToolTip.Tip="KnownGap" />
+                        Content="Expand List" Click="Expand_Click"
+                        ToolTip.Tip="Expand the unit-palette list to a specified entry count" />
               </StackPanel>
             </StackPanel>
           </TabItem>

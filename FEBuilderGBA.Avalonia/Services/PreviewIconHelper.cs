@@ -474,16 +474,20 @@ namespace FEBuilderGBA.Avalonia.Services
         /// Load a class wait icon by class ID. Resolves class ID -> wait icon index (offset +6) -> loads icon.
         /// </summary>
         /// <remarks>
-        /// #654: removed <c>classId == 0</c> early return so class 0 (the
-        /// first row in every class-prefixed list) gets a lookup. The class
-        /// struct at offset 0 may legitimately have <c>waitIconIndex == 0</c>
-        /// (no map sprite), in which case we still bail — but for any other
-        /// class-0 row the icon now renders.
+        /// #935: mirrors WinForms <c>ClassForm.DrawWaitIcon</c>, which guards
+        /// only <c>cid &lt;= 0</c> (class 0 = the "null class" → blank) and then,
+        /// for any class &gt;= 1, reads the wait-icon-table slot from offset +6
+        /// and renders it directly — WITHOUT short-circuiting when that slot
+        /// value is 0. Slot 0 of the wait-icon table is a real sprite, so a
+        /// nonzero class whose <c>waitIconIndex</c> field happens to be 0 must
+        /// still render slot 0 (the old <c>waitIconIndex == 0</c> bail hid the
+        /// first real row's icon across ~30 class-prefixed list editors).
         /// </remarks>
         public static IImage LoadClassWaitIconByClassId(uint classId)
         {
             ROM rom = CoreState.ROM;
             if (rom?.RomInfo == null) return null;
+            if (classId == 0) return null;
             try
             {
                 uint classPtr = rom.RomInfo.class_pointer;
@@ -494,7 +498,6 @@ namespace FEBuilderGBA.Avalonia.Services
                 uint classAddr = classBase + classId * classSize;
                 if (classAddr + classSize > (uint)rom.Data.Length) return null;
                 uint waitIconIndex = rom.u8(classAddr + 6);
-                if (waitIconIndex == 0) return null;
                 return LoadClassWaitIcon(waitIconIndex);
             }
             catch { return null; }
@@ -504,17 +507,20 @@ namespace FEBuilderGBA.Avalonia.Services
         /// Load an item icon by item ID. Resolves item ID -> icon index (offset +29) -> loads icon.
         /// </summary>
         /// <remarks>
-        /// #654: removed <c>itemId == 0</c> early return. Item 0 (the first
-        /// row in every item-prefixed list) is a real ROM entry on every
-        /// supported version — for FE8U it is the "null item" placeholder
-        /// whose icon at offset +29 is 0 (we still bail when that happens),
-        /// but on FE6 / FE7 item 0 has a real icon and was incorrectly
-        /// hidden. Aligns with WinForms which never short-circuits on item ID.
+        /// #935: mirrors WinForms <c>ItemForm.DrawIcon</c>, which guards only
+        /// <c>item_id &lt;= 0</c> (item 0 = the "null item" → blank) and then,
+        /// for any item &gt;= 1, reads the icon-table slot from offset +29 and
+        /// renders it directly — WITHOUT short-circuiting when that slot value
+        /// is 0. Slot 0 of the icon table is a real icon, so a nonzero item
+        /// whose <c>iconIndex</c> field happens to be 0 must still render slot 0
+        /// (the old <c>iconIndex == 0</c> bail hid the first real row's icon
+        /// across the item-prefixed list editors).
         /// </remarks>
         public static IImage LoadItemIconByItemId(uint itemId)
         {
             ROM rom = CoreState.ROM;
             if (rom?.RomInfo == null) return null;
+            if (itemId == 0) return null;
             try
             {
                 uint itemPtr = rom.RomInfo.item_pointer;
@@ -525,11 +531,6 @@ namespace FEBuilderGBA.Avalonia.Services
                 uint itemAddr = itemBase + itemId * itemSize;
                 if (itemAddr + itemSize > (uint)rom.Data.Length) return null;
                 uint iconIndex = rom.u8(itemAddr + 29);
-                // The icon index at +29 is the per-item "icon slot" field;
-                // value 0 means "no icon" (null item placeholder). Bailing
-                // here matches the remarks above and prevents rendering a
-                // phantom icon from slot 0 of the icon table.
-                if (iconIndex == 0) return null;
                 return LoadItemIcon(iconIndex);
             }
             catch { return null; }
@@ -567,6 +568,13 @@ namespace FEBuilderGBA.Avalonia.Services
         /// </summary>
         public static IImage LoadClassWaitIcon(uint waitIconIndex)
         {
+            // #991: the decode + per-animType crop pipeline moved VERBATIM into
+            // the cross-platform FEBuilderGBA.Core.WaitIconRenderCore (single
+            // source of truth — the Avalonia Unit Wait Icon editor reuses it).
+            // This wrapper preserves the existing behavior exactly: resolve the
+            // ambient CoreState ROM + ImageService and render the step-0 frame
+            // with the self palette (the #342/#667 16x24@Y=8 step-0 parity is
+            // baked into RenderClassWaitIcon == RenderFrame(step:0)).
             ROM rom = CoreState.ROM;
             if (rom?.RomInfo == null) return null;
             var svc = CoreState.ImageService;
@@ -574,147 +582,12 @@ namespace FEBuilderGBA.Avalonia.Services
 
             try
             {
-                uint ptr = rom.RomInfo.unit_wait_icon_pointer;
-                if (ptr == 0) return null;
-
-                uint baseAddr = rom.p32(ptr);
-                if (!U.isSafetyOffset(baseAddr)) return null;
-
-                // Each entry in the unit wait icon table is 8 bytes:
-                //   +0: flags (4 bytes), with byte at +2 indicating animation type
-                //   +4: sprite pointer (4 bytes, GBA pointer to LZ77-compressed tile data)
-                uint entryAddr = baseAddr + waitIconIndex * 8;
-                if (entryAddr + 8 > (uint)rom.Data.Length) return null;
-
-                // Read animation type from byte at offset +2 to determine sprite dimensions
-                byte animType = (byte)rom.u8(entryAddr + 2);
-
-                uint spriteGba = rom.u32(entryAddr + 4);
-                if (!U.isPointer(spriteGba)) return null;
-
-                uint spriteAddr = U.toOffset(spriteGba);
-                if (!U.isSafetyOffset(spriteAddr)) return null;
-
-                // Palette: use the unit icon palette address
-                uint palAddr = rom.RomInfo.unit_icon_palette_address;
-                if (palAddr == 0 || !U.isSafetyOffset(palAddr)) return null;
-
-                byte[] palette = ImageUtilCore.GetPalette(palAddr, 16);
-                if (palette == null) return null;
-
-                // Per-animType strip width and per-frame crop rectangle.
-                // Matches WinForms ImageUnitWaitIconFrom.LoadWaitUnitIcon (strip
-                // width = 32 for animType 2, 16 otherwise) and
-                // DrawWaitUnitIcon's first-frame crop for height16_limit=false.
-                int stripWidth;
-                int cropX, cropY, cropW, cropH;
-                if (animType == 2)
-                {
-                    stripWidth = 32;
-                    cropX = 0; cropY = 0; cropW = 32; cropH = 32;
-                }
-                else if (animType == 1)
-                {
-                    stripWidth = 16;
-                    // The strip starts with an 8-pixel padding tile at Y=0..7;
-                    // the actual 16x24 first frame begins at Y=8 (WinForms
-                    // line 138 + 142 in ImageUnitWaitIconFrom.cs).
-                    cropX = 0; cropY = 8; cropW = 16; cropH = 24;
-                }
-                else
-                {
-                    // animType 0 and any unknown value default to the 16x16
-                    // first-frame contract (WinForms line 165 - the `b2 == 0`
-                    // branch with 2*8 width and (2*8) + (b2*8) = 16 height).
-                    stripWidth = 16;
-                    cropX = 0; cropY = 0; cropW = 16; cropH = 16;
-                }
-
-                // Decompress the LZ77 strip and compute its full pixel height.
-                // Mirrors ImageUtil.CalcHeight(width, image_size, align=8):
-                //   ceil(image_size / (width/2)) aligned UP to a multiple of 8.
-                byte[] stripData = LZ77.decompress(rom.Data, spriteAddr);
-                if (stripData == null || stripData.Length == 0) return null;
-
-                int stripHeight = CalcStripHeight(stripWidth, stripData.Length);
-                if (stripHeight <= 0) return null;
-
-                // Bounds-check the crop rectangle against the actual strip size.
-                // If the strip is too short to satisfy the WF crop, bail rather
-                // than render a partial/corrupt image. Matches the null-safety
-                // contract this helper has on every other failure path.
-                if (cropX + cropW > stripWidth) return null;
-                if (cropY + cropH > stripHeight) return null;
-
-                using IImage strip = svc.Decode4bppTiles(
-                    stripData, 0, stripWidth, stripHeight, palette);
-                if (strip == null) return null;
-
-                return CropIndexedRegion(strip, cropX, cropY, cropW, cropH);
+                return FEBuilderGBA.Core.WaitIconRenderCore.RenderClassWaitIcon(rom, waitIconIndex, svc);
             }
             catch
             {
                 return null;
             }
-        }
-
-        /// <summary>
-        /// Compute the rendered strip height from an LZ77-decompressed 4bpp
-        /// byte length. Mirrors WinForms <c>ImageUtil.CalcHeight(width,
-        /// image_size, align=8)</c> exactly so the wait-icon Y=8 crop lines up
-        /// with the WinForms reference even on odd / partial / non-tile-aligned
-        /// decompression lengths.
-        /// </summary>
-        static int CalcStripHeight(int width, int imageSize)
-        {
-            if (width <= 0 || imageSize <= 0) return 0;
-            int half = width / 2;          // 4bpp = 2 pixels/byte
-            if (half <= 0) return 0;
-            int height = imageSize / half;
-            if (imageSize % half != 0) height++;
-            // Align UP to a multiple of 8 rows. WinForms' CalcHeight uses
-            // `if (h % align != 0) h += align;` then `h / align * align` which
-            // is equivalent to ceil(h / align) * align — implement directly.
-            const int align = 8;
-            int remainder = height % align;
-            if (remainder != 0) height += (align - remainder);
-            return height;
-        }
-
-        /// <summary>
-        /// Crop a sub-rectangle out of an indexed strip image, returning a
-        /// fresh indexed <see cref="IImage"/> sharing the strip's palette.
-        /// Used by <see cref="LoadClassWaitIcon"/> to apply the per-animType
-        /// first-frame WF crop rectangle (animType 1's <c>Y=8</c> in
-        /// particular).
-        /// </summary>
-        static IImage CropIndexedRegion(IImage src, int x, int y, int w, int h)
-        {
-            var svc = CoreState.ImageService;
-            if (svc == null) return null;
-            if (src == null) return null;
-            if (!src.IsIndexed) return null;
-
-            byte[] srcIdx = src.GetPixelData();
-            if (srcIdx == null) return null;
-            int srcW = src.Width;
-            int srcH = src.Height;
-            if (x < 0 || y < 0 || w <= 0 || h <= 0) return null;
-            if (x + w > srcW || y + h > srcH) return null;
-            if ((long)srcW * srcH > srcIdx.Length) return null;
-
-            byte[] dstIdx = new byte[w * h];
-            for (int row = 0; row < h; row++)
-            {
-                int srcOff = (y + row) * srcW + x;
-                int dstOff = row * w;
-                Buffer.BlockCopy(srcIdx, srcOff, dstIdx, dstOff, w);
-            }
-
-            IImage outImg = svc.CreateIndexedImage(w, h, src.GetPaletteGBA(), 16);
-            if (outImg == null) return null;
-            outImg.SetPixelData(dstIdx);
-            return outImg;
         }
 
         /// <summary>

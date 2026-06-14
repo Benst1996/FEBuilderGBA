@@ -324,43 +324,56 @@ public class EventUnitFE7ParityTests
     }
 
     [Fact]
-    public void EventBattleTalkFE7View_NavigateTo_LogsSecondaryTableHit()
+    public void EventBattleTalkFE7View_NavigateTo_SwitchesToSecondaryTable()
     {
-        // Copilot review #522 round 4: NavigateTo must NOT call LoadEntry
-        // for secondary-table addresses because the VM assumes 16-byte
-        // blocks but the secondary table uses 12-byte blocks — calling
-        // LoadEntry would misparse fields. The fallback should log + no-op.
+        // #957 W1b: the secondary 12-byte table (event_ballte_talk2_pointer) is
+        // now a browsable/editable table behind the Table filter combo, so
+        // NavigateTo resolves which table the address belongs to and switches
+        // the combo to it (loading the correct schema) instead of only logging
+        // an out-of-list hit (the former Copilot review #522 round-4 gap).
         string repoRoot = FindRepoRoot();
         string path = Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views",
             "EventBattleTalkFE7View.axaml.cs");
         string source = File.ReadAllText(path);
 
-        // Must log the secondary-table hit so the user gets visible
-        // feedback.
+        // NavigateTo must resolve + switch the Table filter combo.
         Assert.Matches(
-            new Regex(@"public\s+void\s+NavigateTo\([^)]*\)\s*\{[\s\S]*?Log\.Notify", RegexOptions.Singleline),
+            new Regex(@"public\s+void\s+NavigateTo\([^)]*\)\s*\{[\s\S]*?ResolveTableIndexFor\(", RegexOptions.Singleline),
             source);
-        // Must NOT call _vm.LoadEntry (12-byte schema mismatch).
-        Assert.DoesNotMatch(
-            new Regex(@"public\s+void\s+NavigateTo\([^)]*\)\s*\{[\s\S]*?_vm\.LoadEntry\(", RegexOptions.Singleline),
+        Assert.Matches(
+            new Regex(@"public\s+void\s+NavigateTo\([^)]*\)\s*\{[\s\S]*?TableFilter\.SelectedIndex", RegexOptions.Singleline),
             source);
+        // The 12-byte secondary schema must be wired in the VM.
+        string vm = File.ReadAllText(Path.Combine(repoRoot, "FEBuilderGBA.Avalonia",
+            "ViewModels", "EventBattleTalkFE7ViewModel.cs"));
+        Assert.Contains("BattleTalkTable.Secondary", vm);
+        Assert.Contains("event_ballte_talk2_pointer", vm);
     }
 
     [Fact]
-    public void EventHaikuFE7View_NavigateTo_LogsTutorialTableHit()
+    public void EventHaikuFE7View_NavigateTo_SwitchesToTutorialTable()
     {
+        // #957 W1b: the two 12-byte tutorial tables (event_haiku_tutorial_1/2_pointer)
+        // are now browsable/editable behind the Table filter combo; NavigateTo
+        // resolves + switches the combo to the correct table instead of only
+        // logging an out-of-list hit (the former Copilot review #522 round-4 gap).
         string repoRoot = FindRepoRoot();
         string path = Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views",
             "EventHaikuFE7View.axaml.cs");
         string source = File.ReadAllText(path);
 
         Assert.Matches(
-            new Regex(@"public\s+void\s+NavigateTo\([^)]*\)\s*\{[\s\S]*?Log\.Notify", RegexOptions.Singleline),
+            new Regex(@"public\s+void\s+NavigateTo\([^)]*\)\s*\{[\s\S]*?ResolveTableIndexFor\(", RegexOptions.Singleline),
             source);
-        // Must NOT misparse 12-byte tutorial rows via LoadEntry.
-        Assert.DoesNotMatch(
-            new Regex(@"public\s+void\s+NavigateTo\([^)]*\)\s*\{[\s\S]*?_vm\.LoadEntry\(", RegexOptions.Singleline),
+        Assert.Matches(
+            new Regex(@"public\s+void\s+NavigateTo\([^)]*\)\s*\{[\s\S]*?TableFilter\.SelectedIndex", RegexOptions.Singleline),
             source);
+        string vm = File.ReadAllText(Path.Combine(repoRoot, "FEBuilderGBA.Avalonia",
+            "ViewModels", "EventHaikuFE7ViewModel.cs"));
+        Assert.Contains("HaikuTable.Tutorial1", vm);
+        Assert.Contains("HaikuTable.Tutorial2", vm);
+        Assert.Contains("event_haiku_tutorial_1_pointer", vm);
+        Assert.Contains("event_haiku_tutorial_2_pointer", vm);
     }
 
     // -----------------------------------------------------------------
@@ -393,6 +406,155 @@ public class EventUnitFE7ParityTests
         Assert.True(File.Exists(axamlPath), $"AXAML not found at {axamlPath}");
         string content = File.ReadAllText(axamlPath);
         Assert.Contains(automationId, content);
+    }
+
+    // -----------------------------------------------------------------
+    // New(Alloc) — #1004 FE7 WF-parity reserved-NEW block + modal count-picker.
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public void ViewModel_NewAllocUnitList_AllocatesEditableBlock_FE7()
+    {
+        // VM NewAllocUnitList(count, undo) must allocate a real FE7 block via
+        // the version-agnostic Core seam and return a valid base. FE7 uses
+        // eventunit_data_size == 16 (ROMFE7U.cs) — NOT 20 like FE8.
+        var vm = new EventUnitFE7ViewModel();
+        ROM rom = MakeFe7uRom();
+        var prevRom = CoreState.ROM;
+        var prevDelegate = CoreState.AppendBinaryData;
+        try
+        {
+            CoreState.ROM = rom;
+            CoreState.AppendBinaryData = null; // headless freespace fallback
+
+            const uint count = 3;
+            const uint fe7UnitSize = 16;
+            Assert.Equal(fe7UnitSize, rom.RomInfo.eventunit_data_size);
+
+            uint newBase = vm.NewAllocUnitList(count, null);
+            Assert.NotEqual(U.NOT_FOUND, newBase);
+
+            // 3 rows × 16 bytes; each row B0 == 1; rest == 0.
+            for (uint i = 0; i < count; i++)
+            {
+                uint rowAddr = newBase + i * fe7UnitSize;
+                Assert.Equal((byte)0x01, rom.Data[rowAddr + 0]);
+                for (uint b = 1; b < fe7UnitSize; b++)
+                    Assert.Equal((byte)0x00, rom.Data[rowAddr + b]);
+            }
+
+            // Trailing terminator byte at base + count*size == 0x00.
+            Assert.Equal((byte)0x00, rom.Data[newBase + count * fe7UnitSize]);
+        }
+        finally
+        {
+            CoreState.ROM = prevRom;
+            CoreState.AppendBinaryData = prevDelegate;
+        }
+    }
+
+    [Fact]
+    public void ViewModel_NewAllocUnitList_FE7_CountZero_IsNoOp()
+    {
+        // Cancel / count==0 path: the VM helper must not allocate.
+        var vm = new EventUnitFE7ViewModel();
+        ROM rom = MakeFe7uRom();
+        var prevRom = CoreState.ROM;
+        var prevDelegate = CoreState.AppendBinaryData;
+        try
+        {
+            CoreState.ROM = rom;
+            CoreState.AppendBinaryData = null;
+
+            uint searchStart = (uint)(rom.Data.Length / 2);
+            byte[] before = rom.getBinaryData(searchStart, 256);
+
+            uint result = vm.NewAllocUnitList(0, null);
+            Assert.Equal(U.NOT_FOUND, result);
+
+            byte[] after = rom.getBinaryData(searchStart, 256);
+            Assert.Equal(before, after);
+        }
+        finally
+        {
+            CoreState.ROM = prevRom;
+            CoreState.AppendBinaryData = prevDelegate;
+        }
+    }
+
+    [Fact]
+    public void View_NewAllocClick_FE7_DoesNotContainOpenEventCondView()
+    {
+        // The stub body that opened EventCondView must be gone; the new handler
+        // must NOT contain a call to Open<EventCondView>.
+        string repoRoot = FindRepoRoot();
+        string codeBehindPath = Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views",
+            "EventUnitFE7View.axaml.cs");
+        string source = File.ReadAllText(codeBehindPath);
+
+        // The old stub opened EventCondView — that must be removed.
+        Assert.DoesNotMatch(
+            new Regex(@"NewAlloc_Click[\s\S]*?Open<EventCondView>", RegexOptions.Singleline),
+            source);
+    }
+
+    [Fact]
+    public void View_NewAllocClick_FE7_OpensModalPickerAndCallsVmAllocator()
+    {
+        // The new handler must open the modal count-picker, call the VM allocator,
+        // and wrap the call in an undo scope — mirrors the FE8 EventUnitView.
+        string repoRoot = FindRepoRoot();
+        string codeBehindPath = Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views",
+            "EventUnitFE7View.axaml.cs");
+        string source = File.ReadAllText(codeBehindPath);
+
+        // async void, modal picker.
+        Assert.Matches(
+            new Regex(@"async\s+void\s+NewAlloc_Click\(", RegexOptions.Singleline),
+            source);
+        Assert.Matches(
+            new Regex(@"NewAlloc_Click[\s\S]*?new\s+EventUnitNewAllocView\(\)[\s\S]*?ShowDialog<uint\?>", RegexOptions.Singleline),
+            source);
+        // Cancel / count==0 no-op guard.
+        Assert.Matches(
+            new Regex(@"NewAlloc_Click[\s\S]*?count\s*==\s*null\s*\|\|\s*count\.Value\s*==\s*0[\s\S]*?return", RegexOptions.Singleline),
+            source);
+        // Undo scope.
+        Assert.Matches(
+            new Regex(@"NewAlloc_Click[\s\S]*?_undoService\.Begin\(", RegexOptions.Singleline),
+            source);
+        Assert.Matches(
+            new Regex(@"NewAlloc_Click[\s\S]*?_vm\.NewAllocUnitList\(", RegexOptions.Singleline),
+            source);
+        Assert.Matches(
+            new Regex(@"NewAlloc_Click[\s\S]*?U\.NOT_FOUND[\s\S]*?_undoService\.Rollback\(\)", RegexOptions.Singleline),
+            source);
+        Assert.Matches(
+            new Regex(@"NewAlloc_Click[\s\S]*?_undoService\.Commit\(\)", RegexOptions.Singleline),
+            source);
+    }
+
+    [Fact]
+    public void View_NewAllocClick_FE7_AddsNewEntryThatSurvivesMapRefresh()
+    {
+        // Session NEW tracking: the View must keep _newAllocData, add a "NEW"
+        // AddrResult on alloc, and re-merge it on map refresh in
+        // MapListBox_SelectionChanged.
+        string repoRoot = FindRepoRoot();
+        string codeBehindPath = Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views",
+            "EventUnitFE7View.axaml.cs");
+        string source = File.ReadAllText(codeBehindPath);
+
+        // Session list field exists.
+        Assert.Matches(new Regex(@"_newAllocData"), source);
+        // NewAlloc adds a "NEW" AddrResult.
+        Assert.Matches(
+            new Regex(@"NewAlloc_Click[\s\S]*?new\s+AddrResult\([^)]*""NEW""[^)]*\)[\s\S]*?_newAllocData\.Add", RegexOptions.Singleline),
+            source);
+        // Map selection re-merges NEW allocations.
+        Assert.Matches(
+            new Regex(@"MapListBox_SelectionChanged[\s\S]*?MergeNewAllocData\(", RegexOptions.Singleline),
+            source);
     }
 
     // -----------------------------------------------------------------

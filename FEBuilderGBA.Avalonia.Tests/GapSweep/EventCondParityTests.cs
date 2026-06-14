@@ -1390,6 +1390,149 @@ public class EventCondParityTests
             source);
     }
 
+
+    // -----------------------------------------------------------------
+    // PR #867 review fixes: PreciseAlloc_Click navigation + GetPlistLimit DRY
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public void View_PreciseAllocClick_SetsEventDataAddrToAllocatedOffset()
+    {
+        // FIX 1 (#867): After a successful AllocNewEventCondBlock +
+        // WriteEventPLIST, PreciseAlloc_Click must set _vm.EventDataAddr = off
+        // (the newly-allocated block) so ReloadRecordList shows the new block's
+        // slots rather than "No event data for this map".
+        //
+        // WF parity: WF EventCondForm.PreciseEevntCondArea returns write_addr
+        // and the caller displays it directly without re-reading the map-setting
+        // event-plist byte. The correct fix navigates to the new block address.
+        //
+        // We verify the fix by source-regex: the handler must assign
+        // _vm.EventDataAddr = off BEFORE calling ReloadRecordList(), and must
+        // NOT call ResolveEventDataAddr after the alloc succeeds.
+        string repoRoot = FindRepoRoot();
+        string codeBehindPath = System.IO.Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views",
+            "EventCondView.axaml.cs");
+        string source = System.IO.File.ReadAllText(codeBehindPath);
+
+        // The PreciseAlloc_Click handler body must contain:
+        //   _vm.EventDataAddr = off;
+        //   ...
+        //   ReloadRecordList();
+        // (in that order, within the same try-block, after WriteEventPLIST).
+        Assert.Matches(
+            new System.Text.RegularExpressions.Regex(
+                @"WriteEventPLIST[\s\S]*?_vm\.EventDataAddr\s*=\s*off[\s\S]*?ReloadRecordList\(\)",
+                System.Text.RegularExpressions.RegexOptions.Singleline),
+            source);
+    }
+
+    [Fact]
+    public void View_PreciseAllocClick_DoesNotCallResolveEventDataAddrAfterAlloc()
+    {
+        // FIX 1 (#867): PreciseAlloc_Click must NOT call ResolveEventDataAddr
+        // after a successful alloc (doing so would re-read the current map's
+        // event-plist byte, losing the newly-allocated address). The handler
+        // sets _vm.EventDataAddr = off directly instead.
+        string repoRoot = FindRepoRoot();
+        string codeBehindPath = System.IO.Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views",
+            "EventCondView.axaml.cs");
+        string source = System.IO.File.ReadAllText(codeBehindPath);
+
+        // The PreciseAlloc_Click handler must NOT call ResolveEventDataAddr
+        // after the WriteEventPLIST call — doing so re-reads the map's plist
+        // byte and would discard the newly-allocated address.
+        // We use a regex that spans WriteEventPLIST ... Commit to check the
+        // post-alloc success path does not re-resolve.
+        Assert.DoesNotMatch(
+            new System.Text.RegularExpressions.Regex(
+                @"WriteEventPLIST[\s\S]*?ResolveEventDataAddr[\s\S]*?_undoService\.Commit",
+                System.Text.RegularExpressions.RegexOptions.Singleline),
+            source);
+    }
+
+    [Fact]
+    public void Core_ResolveEventPlistSlotAddr_UsesGetPlistLimitNotInlineCalc()
+    {
+        // FIX 2 (#867): EventCondCore.ResolveEventPlistSlotAddr must call
+        // MapChangeCore.GetPlistLimit(rom) instead of the inline
+        // `IsPlistSplit(rom) ? 256u : rom.RomInfo.map_map_pointer_list_default_size`
+        // so the split-detection logic can't diverge from the canonical helper.
+        string repoRoot = FindRepoRoot();
+        string corePath = System.IO.Path.Combine(repoRoot, "FEBuilderGBA.Core", "EventCondCore.cs");
+        string source = System.IO.File.ReadAllText(corePath);
+
+        // Production must use GetPlistLimit (not the inline ternary).
+        Assert.Contains("MapChangeCore.GetPlistLimit(rom)", source);
+        // Production must NOT contain the old inline ternary inside
+        // ResolveEventPlistSlotAddr.
+        Assert.DoesNotMatch(
+            new System.Text.RegularExpressions.Regex(
+                @"ResolveEventPlistSlotAddr[\s\S]*?IsPlistSplit\(rom\)\s*\?\s*256u\s*:",
+                System.Text.RegularExpressions.RegexOptions.Singleline),
+            source);
+    }
+
+    // -----------------------------------------------------------------
+    // #957 W1a — Tutorial Text ID is now an IdFieldControl.
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// EventCondView Tutorial Text ID must be wired as IdFieldControl (not plain
+    /// NumericUpDown). ShowPick=False, JumpRequested and ValueChanged must be set.
+    /// This mirrors the pattern used for TALK Unit1/2 and OBJECT ChestItem (#951).
+    /// Note: AXAML attached-property attributes serialize as
+    ///   "AutomationProperties.AutomationId" (full LocalName, default namespace),
+    ///   so we search by Name="TextIdBox" and validate attributes directly.
+    /// </summary>
+    [Fact]
+    public void TutorialTextId_IsIdFieldControl_WithJumpAndValueChanged()
+    {
+        string repoRoot = FindRepoRoot();
+        string axamlPath = Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views",
+            "EventCondView.axaml");
+        Assert.True(File.Exists(axamlPath), $"AXAML not found at {axamlPath}");
+
+        var doc = XDocument.Load(axamlPath);
+
+        // Find by Name="TextIdBox" — preserved from original NUD.
+        var ctrl = doc.Descendants()
+            .FirstOrDefault(e =>
+                e.Name.LocalName == "IdFieldControl" &&
+                e.Attributes().Any(a => a.Name.LocalName == "Name"
+                                        && a.Value == "TextIdBox"));
+
+        Assert.NotNull(ctrl);
+
+        // ShowPick must be "False".
+        string? showPick = ctrl!.Attributes()
+            .FirstOrDefault(a => a.Name.LocalName == "ShowPick")?.Value;
+        Assert.Equal("False", showPick);
+
+        // JumpRequested must be wired.
+        string? jump = ctrl.Attributes()
+            .FirstOrDefault(a => a.Name.LocalName == "JumpRequested")?.Value;
+        Assert.False(string.IsNullOrWhiteSpace(jump),
+            "IdFieldControl TextIdBox must have JumpRequested wired");
+
+        // ValueChanged must be wired.
+        string? vc = ctrl.Attributes()
+            .FirstOrDefault(a => a.Name.LocalName == "ValueChanged")?.Value;
+        Assert.False(string.IsNullOrWhiteSpace(vc),
+            "IdFieldControl TextIdBox must have ValueChanged wired");
+
+        // Confirm no plain NumericUpDown still carries Name="TextIdBox".
+        bool legacyNud = doc.Descendants()
+            .Any(e => e.Name.LocalName == "NumericUpDown" &&
+                      e.Attributes().Any(a => a.Name.LocalName == "Name"
+                                              && a.Value == "TextIdBox"));
+        Assert.False(legacyNud, "Legacy NumericUpDown Name='TextIdBox' must be removed");
+
+        // Raw content check: AutomationId string must still be present somewhere.
+        string content = File.ReadAllText(axamlPath);
+        Assert.Contains("EventCond_TextId_Input", content);
+    }
+
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------

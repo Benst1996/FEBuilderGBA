@@ -374,6 +374,55 @@ public class SongInstrumentParityTests
     }
 
     /// <summary>
+    /// #1092 Copilot bot inline finding: the wave Export/Import gates
+    /// (`IsLoadedDirectSound` / `IsLoadedDirectSoundFixedFreq`) must stay
+    /// correct AFTER a type change + Write — `Write()` refreshes the pinned
+    /// `LoadedHeaderByte` to the just-persisted on-ROM byte. This proves:
+    ///   * a voice loaded as 0x10 then written as 0x08 -> N08 gate TRUE, N00 FALSE;
+    ///   * a voice loaded as 0x08 then written as 0x10 -> BOTH gates FALSE
+    ///     (0x10/0x18 stay out of scope even after a write).
+    /// </summary>
+    [Fact]
+    public void ViewModel_Write_RefreshesLoadedHeaderByte_ForWaveGates()
+    {
+        var rom = MakeMinimalRom(out uint addr);
+        var prevRom = CoreState.ROM;
+        try
+        {
+            CoreState.ROM = rom;
+
+            // Seed the ROM entry as 0x10 (DirectSound Reverse) and load it.
+            rom.Data[addr + 0] = 0x10;
+            rom.Data[addr + 4] = 0x00; rom.Data[addr + 5] = 0x04;
+            rom.Data[addr + 6] = 0x20; rom.Data[addr + 7] = 0x08; // safe P4
+            var vm = new SongInstrumentViewModel();
+            vm.LoadEntry(addr);
+            Assert.Equal((byte)0x10, vm.LoadedHeaderByte);
+            Assert.False(vm.IsLoadedDirectSound);
+            Assert.False(vm.IsLoadedDirectSoundFixedFreq); // 0x10 is out of scope
+
+            // User changes the type to 0x08 and writes.
+            vm.HeaderByte = 0x08;
+            vm.Category = SongInstrumentViewModel.ClassifyType(0x08);
+            vm.Write();
+            // The gate now reflects the WRITTEN on-ROM byte (0x08): N08 enabled.
+            Assert.Equal((byte)0x08, vm.LoadedHeaderByte);
+            Assert.True(vm.IsLoadedDirectSoundFixedFreq);
+            Assert.False(vm.IsLoadedDirectSound);
+
+            // User changes the type to 0x10 (out of scope) and writes again.
+            vm.HeaderByte = 0x10;
+            vm.Category = SongInstrumentViewModel.ClassifyType(0x10);
+            vm.Write();
+            // BOTH wave gates are now FALSE — 0x10 stays disabled post-write.
+            Assert.Equal((byte)0x10, vm.LoadedHeaderByte);
+            Assert.False(vm.IsLoadedDirectSound);
+            Assert.False(vm.IsLoadedDirectSoundFixedFreq);
+        }
+        finally { CoreState.ROM = prevRom; }
+    }
+
+    /// <summary>
     /// SquareWave family tabs (N01/N02/N09/N0A): WF exposes B0..B11 raw
     /// (including B4=squarepattern). All 12 bytes must round-trip.
     /// </summary>
@@ -740,6 +789,89 @@ public class SongInstrumentParityTests
     }
 
     // -----------------------------------------------------------------
+    // #1014 - honest deferral tooltips on disabled Sappy / wave buttons.
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// #1014: the Sappy preview buttons (N00 + N08) stay disabled (Windows-only
+    /// wontfix). Each must remain IsEnabled="False", carry NO Click handler,
+    /// drop the stale "Pending Core extraction" wording, and surface the honest
+    /// Windows-only tooltip on its enabled Border wrapper (#997/#1011 pattern).
+    /// </summary>
+    [Theory]
+    [InlineData("SongInstrument_N00_Preview_Button")]
+    [InlineData("SongInstrument_N08_Preview_Button")]
+    [InlineData("SongInstrument_N10_Preview_Button")]
+    [InlineData("SongInstrument_N18_Preview_Button")]
+    public void View_SappyPreviewButtons_StayDisabled_HonestTooltip(string automationId)
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
+        Assert.True(idx >= 0, $"AutomationId {automationId} not found in AXAML");
+
+        int elementStart = axaml.LastIndexOf('<', idx);
+        int elementEnd = FindElementEnd(axaml, elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 1);
+
+        Assert.Contains("IsEnabled=\"False\"", element);
+        Assert.DoesNotContain("Click=", element);
+    }
+
+    /// <summary>
+    /// #1057 + #1001 PR1: ALL four DirectSound Export/Import button pairs
+    /// (N00 0x00, N08 0x08, N10 0x10, N18 0x18) AND the instrument-set InstExport
+    /// (PR1) + InstImport (PR2) buttons are ENABLED and carry their Click handlers
+    /// (the wave I/O Core port SongDirectSoundWavCore + the recursive
+    /// export/import SongInstrumentSetCore landed). They must NOT carry
+    /// IsEnabled="False" and MUST wire the click handlers.
+    /// </summary>
+    [Theory]
+    [InlineData("SongInstrument_N00_Export_Button", "N00_Export_Click")]
+    [InlineData("SongInstrument_N00_Import_Button", "N00_Import_Click")]
+    [InlineData("SongInstrument_N08_Export_Button", "N08_Export_Click")]
+    [InlineData("SongInstrument_N08_Import_Button", "N08_Import_Click")]
+    [InlineData("SongInstrument_N10_Export_Button", "N10_Export_Click")]
+    [InlineData("SongInstrument_N10_Import_Button", "N10_Import_Click")]
+    [InlineData("SongInstrument_N18_Export_Button", "N18_Export_Click")]
+    [InlineData("SongInstrument_N18_Import_Button", "N18_Import_Click")]
+    [InlineData("SongInstrument_InstExport_Button", "InstExport_Click")]
+    [InlineData("SongInstrument_InstImport_Button", "InstImport_Click")]
+    public void View_DirectSoundWaveButtons_Enabled_WithClick(string automationId, string clickHandler)
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
+        Assert.True(idx >= 0, $"AutomationId {automationId} not found in AXAML");
+
+        int elementStart = axaml.LastIndexOf('<', idx);
+        int elementEnd = FindElementEnd(axaml, elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 1);
+
+        Assert.DoesNotContain("IsEnabled=\"False\"", element);
+        Assert.Contains($"Click=\"{clickHandler}\"", element);
+    }
+
+    /// <summary>
+    /// #1014 + #1001 PR1: the AXAML must no longer carry the misleading "Pending
+    /// Core extraction" wording NOR the deferred wave-export tooltip (all four
+    /// DirectSound tabs are now wired), and MUST keep the honest Sappy
+    /// Windows-only tooltip.
+    /// </summary>
+    [Fact]
+    public void View_HonestDeferralTooltips_Present_PendingWordingGone()
+    {
+        string axaml = ReadAxaml();
+        Assert.DoesNotContain("Pending Core extraction", axaml);
+        // All four DirectSound wave tabs are wired now -> the deferred wave-export
+        // tooltip is gone entirely.
+        Assert.DoesNotContain(
+            "Wave/instrument export/import is a planned cross-platform enhancement (needs the SongUtil DirectSound port) — tracked by #1057.",
+            axaml);
+        Assert.Contains(
+            "Sappy emulator playback is Windows-only (user32 P/Invoke); use the WinForms version of FEBuilderGBA.",
+            axaml);
+    }
+
+    // -----------------------------------------------------------------
     // Navigation manifest (Phase 4) - empty (concern v1 #3).
     // -----------------------------------------------------------------
 
@@ -813,6 +945,23 @@ public class SongInstrumentParityTests
     }
 
     static string ReadAxaml() => File.ReadAllText(AxamlPath());
+
+    /// <summary>
+    /// Return the index of the '>' that closes the AXAML element opened at
+    /// <paramref name="elementStart"/>, skipping '>' chars inside quoted
+    /// attribute values (mirrors WorldMapImageParityTests.FindElementEnd).
+    /// </summary>
+    static int FindElementEnd(string axaml, int elementStart)
+    {
+        bool inAttrValue = false;
+        for (int i = elementStart; i < axaml.Length; i++)
+        {
+            char c = axaml[i];
+            if (c == '"') inAttrValue = !inAttrValue;
+            else if (c == '>' && !inAttrValue) return i;
+        }
+        return -1;
+    }
 
     /// <summary>
     /// Build a tiny synthetic FE8U ROM with 12 zero bytes at 0x100000 for

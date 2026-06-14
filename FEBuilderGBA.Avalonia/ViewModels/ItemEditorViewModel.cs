@@ -110,8 +110,8 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         public uint ShopForgePrice { get => _shopForgePrice; private set => SetField(ref _shopForgePrice, value); }
 
         // --- Computed: Stat bonus preview ---
-        int _bonusHP, _bonusStr, _bonusSkl, _bonusSpd, _bonusDef, _bonusRes, _bonusLck, _bonusMove, _bonusCon;
-        bool _hasBonusPreview;
+        int _bonusHP, _bonusStr, _bonusSkl, _bonusSpd, _bonusDef, _bonusRes, _bonusLck, _bonusMove, _bonusCon, _bonusMag;
+        bool _hasBonusPreview, _hasMagicBonus;
         public int BonusHP { get => _bonusHP; private set => SetField(ref _bonusHP, value); }
         public int BonusStr { get => _bonusStr; private set => SetField(ref _bonusStr, value); }
         public int BonusSkl { get => _bonusSkl; private set => SetField(ref _bonusSkl, value); }
@@ -122,6 +122,19 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         public int BonusMove { get => _bonusMove; private set => SetField(ref _bonusMove, value); }
         public int BonusCon { get => _bonusCon; private set => SetField(ref _bonusCon, value); }
         public bool HasBonusPreview { get => _hasBonusPreview; private set => SetField(ref _hasBonusPreview, value); }
+        /// <summary>
+        /// MagicSplit magic stat-bonus value (offset +9 in the stat-bonus block).
+        /// Mirrors WF <c>MagicExtUnitBase</c>. Read bounds-guarded; 0 when the
+        /// 10th byte is unavailable. Only meaningful when <see cref="HasMagicBonus"/>.
+        /// </summary>
+        public int BonusMag { get => _bonusMag; private set => SetField(ref _bonusMag, value); }
+        /// <summary>
+        /// True only on FE7U/FE8U MagicSplit ROMs, where the stat-bonus block
+        /// carries a 10th Magic value (mirrors WF <c>MagicExtUnitBase</c>
+        /// visibility). FE8N/vanilla/FE6 keep this false so the Magic row stays
+        /// hidden.
+        /// </summary>
+        public bool HasMagicBonus { get => _hasMagicBonus; private set => SetField(ref _hasMagicBonus, value); }
 
         // --- Computed: Effective class list ---
         List<string> _effectiveClassList = new();
@@ -132,8 +145,86 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         // --- Computed: Null pointer warnings ---
         bool _showAllocStatBonuses, _showAllocEffectiveness;
         uint _currentItemIndex;
+
+        // #1132 review (PR #1142): the field→value snapshot captured at LoadItem.
+        // BuildSourceFieldDict compares against this so ONLY fields the user
+        // actually changed are sent to the source writer — never a full snapshot of
+        // (possibly stale) preview-ROM values, which could clobber unrelated source
+        // fields that diverged from the unrebuilt preview.
+        Dictionary<string, uint> _loadedSourceFieldSnapshot = new Dictionary<string, uint>(StringComparer.Ordinal);
         public bool ShowAllocStatBonuses { get => _showAllocStatBonuses; private set => SetField(ref _showAllocStatBonuses, value); }
         public bool ShowAllocEffectiveness { get => _showAllocEffectiveness; private set => SetField(ref _showAllocEffectiveness, value); }
+
+        /// <summary>
+        /// Current entry index (0 = the null/unused item 0). Exposed for the
+        /// source-backed writer save-gate (#1132) which keys the edit by entry id.
+        /// </summary>
+        public int CurrentItemIndex => (int)_currentItemIndex;
+
+        /// <summary>
+        /// The current candidate C-field → value map (all source-writable integer item
+        /// fields), keyed by conventional decomp C field names. The View intersects this
+        /// with the manifest owner's declared <c>fields</c> before calling the writer, so
+        /// a field the manifest does not declare is silently dropped. Pointers and text-id
+        /// fields are omitted (not safe to rewrite as plain integer literals).
+        ///
+        /// NOTE: the range byte is intentionally omitted. <see cref="Range"/> is a single
+        /// encoded min-max byte; mapping it to a manifest <c>minRange</c>/<c>maxRange</c>
+        /// pair would write the same encoded byte into both real components — wrong. Until
+        /// the encoded byte can be split safely, range edits stay ROM-only.
+        /// </summary>
+        Dictionary<string, uint> CurrentSourceFieldMap()
+        {
+            return new Dictionary<string, uint>(StringComparer.Ordinal)
+            {
+                { "maxUses",       Uses },
+                { "might",         Might },
+                { "hitRate",       Hit },
+                { "weight",        Weight },
+                { "critRate",      Crit },
+                { "cost",          Price },
+                { "price",         Price },
+                { "weaponLevel",   WeaponRank },
+                { "iconId",        Icon },
+                { "weaponType",    WeaponType },
+            };
+        }
+
+        /// <summary>
+        /// Build the C-field → value map of ONLY the fields the user actually changed
+        /// since <see cref="LoadItem"/> (#1132, PR #1142 review). Comparing against the
+        /// load-time snapshot guarantees an unrelated field whose source has diverged
+        /// from the (stale, pre-rebuild) preview ROM is NOT rewritten back to the stale
+        /// value. The View further intersects this with the manifest owner's declared
+        /// <c>fields</c>, so an undeclared field is silently dropped.
+        /// </summary>
+        public IReadOnlyDictionary<string, uint> BuildSourceFieldDict()
+        {
+            var current = CurrentSourceFieldMap();
+            var changed = new Dictionary<string, uint>(StringComparer.Ordinal);
+            foreach (var kv in current)
+            {
+                // Send a field only when it has no baseline (defensive) or its value
+                // differs from the load-time snapshot — i.e. the user edited it.
+                if (!_loadedSourceFieldSnapshot.TryGetValue(kv.Key, out uint baseline)
+                    || baseline != kv.Value)
+                {
+                    changed[kv.Key] = kv.Value;
+                }
+            }
+            return changed;
+        }
+
+        /// <summary>
+        /// Re-baseline the source-field snapshot to the CURRENT values after a
+        /// successful source-backed write (#1132, PR #1142 review), so an immediate
+        /// re-Save of the same edit is correctly a no-op rather than re-emitting the
+        /// just-written fields.
+        /// </summary>
+        public void RefreshSourceFieldSnapshot()
+        {
+            _loadedSourceFieldSnapshot = CurrentSourceFieldMap();
+        }
 
         /// <summary>Recalculate all computed fields. Call after loading or UI changes.</summary>
         public void RecalcComputed()
@@ -166,6 +257,8 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             {
                 HasBonusPreview = false;
                 BonusHP = BonusStr = BonusSkl = BonusSpd = BonusDef = BonusRes = BonusLck = BonusMove = BonusCon = 0;
+                BonusMag = 0;
+                HasMagicBonus = false;
                 return;
             }
 
@@ -174,6 +267,8 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             {
                 HasBonusPreview = false;
                 BonusHP = BonusStr = BonusSkl = BonusSpd = BonusDef = BonusRes = BonusLck = BonusMove = BonusCon = 0;
+                BonusMag = 0;
+                HasMagicBonus = false;
                 return;
             }
 
@@ -187,6 +282,15 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             BonusLck  = (sbyte)rom.u8(addr + 6);
             BonusMove = (sbyte)rom.u8(addr + 7);
             BonusCon  = (sbyte)rom.u8(addr + 8);
+
+            // MagicSplit magic stat-bonus (offset +9) — mirrors WF MagicExtUnitBase.
+            // Bounds-guard the 10th byte so the existing 9-byte vanilla preview
+            // stays intact (a vanilla block has no +9 byte → Mag = 0).
+            BonusMag = (addr + 10 <= (uint)rom.Data.Length) ? (sbyte)rom.u8(addr + 9) : 0;
+            // Visibility gate: FE7U/FE8U MagicSplit only (NOT FE8N) for WF parity.
+            var ms = PatchDetectionService.Instance.MagicSplit;
+            HasMagicBonus = (ms == PatchDetectionService.MagicSplitType.FE7U
+                          || ms == PatchDetectionService.MagicSplitType.FE8U);
         }
 
         void UpdateEffectiveClassList()
@@ -334,6 +438,10 @@ namespace FEBuilderGBA.Avalonia.ViewModels
                 _currentItemIndex = 0;
 
             RecalcComputed();
+
+            // Snapshot the source-writable field values so BuildSourceFieldDict can
+            // later emit ONLY the fields the user changed (#1132, PR #1142 review).
+            _loadedSourceFieldSnapshot = CurrentSourceFieldMap();
         }
 
         public int GetListCount() => LoadItemList().Count;
@@ -517,6 +625,58 @@ namespace FEBuilderGBA.Avalonia.ViewModels
                 rom.write_u8(addr + 34, Unk34);
                 rom.write_u8(addr + 35, Unk35);
             }
+        }
+
+        /// <summary>
+        /// New-alloc the StatBooster (P12) block for the current item — mirrors
+        /// WF <c>L_12_NEWALLOC_ITEMSTATBOOSTER</c> /
+        /// <c>AllocEvent("ITEMSTATBOOSTER")</c>. Delegates to
+        /// <see cref="ItemAllocCore.AllocStatBonuses"/> (template <c>byte[20]</c>
+        /// <c>[1]=5</c>), which writes the block + repoints the slot under the
+        /// ambient undo scope opened by the View's <c>UndoService.Begin</c>.
+        /// No-clobber: a non-zero P12 is left untouched. On success refreshes
+        /// <see cref="StatBonusesPtr"/> + the computed warnings/preview.
+        /// </summary>
+        /// <returns>true when a block was allocated and the pointer set.</returns>
+        public bool AllocStatBonuses(Undo.UndoData? undoData)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null || CurrentAddr == 0) return false;
+            // Gate identical to the warning visibility (Ptr==0 && index>0).
+            if (StatBonusesPtr != 0 || _currentItemIndex == 0) return false;
+
+            uint addr = ItemAllocCore.AllocStatBonuses(rom, CurrentAddr, undoData);
+            if (addr == U.NOT_FOUND) return false;
+
+            // Re-read the freshly written pointer slot so the UI + computed
+            // fields reflect the new block (mirrors WF writeButton.PerformClick).
+            StatBonusesPtr = rom.u32(CurrentAddr + 12);
+            RecalcComputed();
+            return true;
+        }
+
+        /// <summary>
+        /// New-alloc the Effectiveness (P16) block for the current item —
+        /// mirrors WF <c>L_16_NEWALLOC_EFFECTIVENESS</c> /
+        /// <c>AllocEvent("EFFECTIVENESS")</c>. <paramref name="skillSystemsRework"/>
+        /// selects the WF patch-conditional template
+        /// (<see cref="ItemAllocCore.BuildEffectivenessTemplate"/>); the View
+        /// supplies <c>PatchDetectionService.SkillSystemsClassTypeRework</c>.
+        /// No-clobber + ambient-undo, exactly like
+        /// <see cref="AllocStatBonuses"/>.
+        /// </summary>
+        public bool AllocEffectiveness(bool skillSystemsRework, Undo.UndoData? undoData)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null || CurrentAddr == 0) return false;
+            if (EffectivenessPtr != 0 || _currentItemIndex == 0) return false;
+
+            uint addr = ItemAllocCore.AllocEffectiveness(rom, CurrentAddr, skillSystemsRework, undoData);
+            if (addr == U.NOT_FOUND) return false;
+
+            EffectivenessPtr = rom.u32(CurrentAddr + 16);
+            RecalcComputed();
+            return true;
         }
 
         /// <summary>

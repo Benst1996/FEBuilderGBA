@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using FEBuilderGBA.Avalonia.Services;
+using FEBuilderGBA.Core;
 
 namespace FEBuilderGBA.Avalonia.ViewModels
 {
@@ -8,16 +9,43 @@ namespace FEBuilderGBA.Avalonia.ViewModels
     {
         const uint SIZE = 16;
 
+        /// <summary>Byte stride of one battle-animation list record (WF N_Init).</summary>
+        const uint AnimeRecordStride = 32;
+
         uint _currentAddr;
         bool _isLoaded;
         bool _canWrite;
         uint _id0, _id1, _id2, _id3, _id4, _id5, _id6, _id7, _id8, _id9, _id10, _id11;
         uint _palettePointer;
         string _identifierName = "";
+        int _selectedPaletteSlot;   // 1-based unit-palette slot (WF AddressList.SelectedIndex + 1)
+        int _paletteTypeIndex;      // sub-palette / SwapPalette index (WF PaletteIndexComboBox)
+        uint _classId;              // class whose battle anime feeds the sample preview
+        string _className = "";
 
         public uint CurrentAddr { get => _currentAddr; set => SetField(ref _currentAddr, value); }
         public bool IsLoaded { get => _isLoaded; set => SetField(ref _isLoaded, value); }
         public bool CanWrite { get => _canWrite; set => SetField(ref _canWrite, value); }
+
+        /// <summary>
+        /// 1-based unit-palette slot of the selected entry — the WF
+        /// <c>paletteno = AddressList.SelectedIndex + 1</c> that becomes the
+        /// <c>custompalette</c> override in <c>DrawBattleAnime</c>. 0 = none selected.
+        /// </summary>
+        public int SelectedPaletteSlot { get => _selectedPaletteSlot; set => SetField(ref _selectedPaletteSlot, value); }
+
+        /// <summary>
+        /// Active sub-palette (palette-type) index — the WF
+        /// <c>paletteIndex = PaletteIndexComboBox.SelectedIndex</c> (SwapPalette).
+        /// Independent of <see cref="SelectedPaletteSlot"/>.
+        /// </summary>
+        public int PaletteTypeIndex { get => _paletteTypeIndex; set => SetField(ref _paletteTypeIndex, value); }
+
+        /// <summary>Class whose battle animation is rendered in the sample preview.</summary>
+        public uint ClassID { get => _classId; set => SetField(ref _classId, value); }
+
+        /// <summary>Resolved class name for <see cref="ClassID"/> (display only).</summary>
+        public string ClassName { get => _className; set => SetField(ref _className, value); }
 
         // B0-B11: Identifier string bytes (12 chars)
         public uint Id0 { get => _id0; set => SetField(ref _id0, value); }
@@ -204,7 +232,201 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             rom.write_u32(addr + 12, PalettePointer);
         }
 
+        /// <summary>
+        /// Render the class battle-anime sample-preview grid for the currently
+        /// selected unit-palette slot (<see cref="SelectedPaletteSlot"/>), the
+        /// active sub-palette (<see cref="PaletteTypeIndex"/>), and the chosen
+        /// class (<see cref="ClassID"/>). Convenience wrapper over the explicit
+        /// overload that reads the VM's current state.
+        /// </summary>
+        public IImage RenderClassSamplePreview()
+            => RenderClassSamplePreview((int)ClassID, SelectedPaletteSlot, PaletteTypeIndex);
+
+        /// <summary>
+        /// Render the class battle-anime sample-preview grid, recolored with the
+        /// UNIT palette at slot <paramref name="paletteno"/> (NOT the anime's own
+        /// palette) and sub-palette <paramref name="paletteIndex"/>. Mirrors WinForms
+        /// <c>ImageUnitPaletteForm.DrawSample(GetAnimeIDByClassID(classID), paletteno, paletteIndex)</c>:
+        ///   1. resolve the class's battle-anime ID via
+        ///      <see cref="ClassFormCore.GetAnimeIDByClassID"/> (the WF
+        ///      <c>p32 + u16(ptr+2)</c> chain, FE6 <c>+48</c> / FE7-8 <c>+52</c>);
+        ///   2. convert that 1-based anime ID to the record offset
+        ///      (<c>base + (id-1)*0x20</c>, the WF <c>DrawBattleAnime id-1 / N_Init</c>
+        ///      indexing);
+        ///   3. resolve the UNIT-palette override address via
+        ///      <see cref="BattleAnimeRendererCore.GetUnitPaletteAddr"/> (the WF
+        ///      <c>GetPaletteAddr(paletteno)</c> = <c>p32(IDToAddr(paletteno-1)+12)</c>);
+        ///   4. render via the palette-override overload of
+        ///      <see cref="BattleAnimeRendererCore.RenderSampleBattleAnime(uint,int,uint,byte[])"/>,
+        ///      so the BASE is the unit palette, not the anime palette.
+        ///
+        /// <para><b>Live-recolor (#1022):</b> when <paramref name="editedPaletteBlock"/>
+        /// is a valid EXACT 32-byte block (the view's in-memory R/G/B spinners), it
+        /// is forwarded to the renderer's 4th param and used DIRECTLY as the
+        /// palette — the cross-platform mirror of WF
+        /// <c>ImageUnitPaletteForm.OnChangeColor</c> (ImageUnitPaletteForm.cs:321-333),
+        /// which live-recolors the preview as the user edits colors. When
+        /// <paramref name="editedPaletteBlock"/> is null (the parameterless overload,
+        /// or the previewed sub-palette is NOT the editable block), the SAVED on-ROM
+        /// unit palette is rendered exactly as before.</para>
+        ///
+        /// <para>Null-safe: returns null on null ROM/ImageService, an
+        /// unresolvable class / anime / palette slot, or a blank render — the
+        /// caller (view) treats null as "clear preview".</para>
+        /// </summary>
+        /// <param name="classID">Class whose battle anime to render.</param>
+        /// <param name="paletteno">1-based unit-palette slot (the WF
+        /// <c>AddressList.SelectedIndex + 1</c> custompalette override).</param>
+        /// <param name="paletteIndex">Sub-palette / SwapPalette index.</param>
+        /// <param name="editedPaletteBlock">Optional EXACT 32-byte live-edited
+        /// palette block (#1022). Forwarded to the renderer's 4th param; null =
+        /// render the saved on-ROM palette.</param>
+        public IImage RenderClassSamplePreview(int classID, int paletteno, int paletteIndex,
+            byte[] editedPaletteBlock = null)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null || rom.RomInfo == null || CoreState.ImageService == null) return null;
+            if (classID <= 0 || paletteno <= 0) return null;
+
+            // 1. class -> battle-anime ID (WF GetAnimeIDByClassID). 0 = unresolvable.
+            uint animeId = ClassFormCore.GetAnimeIDByClassID(rom, classID);
+            if (animeId == 0) return null;
+
+            // 2. anime ID -> record offset (WF DrawBattleAnime: id-1 then
+            //    N_Init.IDToAddr = p32(image_battle_animelist_pointer) + (id-1)*0x20).
+            uint listPointer = rom.RomInfo.image_battle_animelist_pointer;
+            if (listPointer == 0) return null;
+            uint listBase = rom.p32(listPointer);
+            if (!U.isSafetyOffset(listBase, rom)) return null;
+            uint recordOffset = listBase + (animeId - 1) * AnimeRecordStride;
+            if (!U.isSafetyOffset(recordOffset, rom)) return null;
+
+            // 3. unit-palette override address (WF GetPaletteAddr(paletteno)).
+            //    NOT_FOUND => no valid override; fall back to 0 so the render uses
+            //    the anime's own palette rather than crashing (the WF
+            //    `if (U.isSafetyOffset(addr)) palettes = p` guard).
+            uint paletteOverride = BattleAnimeRendererCore.GetUnitPaletteAddr(rom, paletteno);
+            if (paletteOverride == U.NOT_FOUND) paletteOverride = 0;
+
+            // 4. render with the UNIT palette override + the paletteIndex sub-palette.
+            //    #1022: forward the live-edited 32-byte block (or null) so an
+            //    in-progress R/G/B edit recolors the preview directly.
+            return BattleAnimeRendererCore.RenderSampleBattleAnime(
+                recordOffset, paletteIndex, paletteOverride, editedPaletteBlock);
+        }
+
         public int GetListCount() => LoadList().Count;
+
+        // ----------------------------------------------------------------
+        // List expansion (#1078) — predicate-aware grow of the unit-palette table
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Grow the unit-palette pointer table to <paramref name="newCount"/>
+        /// rows. Mirrors WinForms <c>ImageUnitPaletteForm</c>'s
+        /// <c>ExpandsArea(ExpandsFillOption.FIRST, ...)</c> +
+        /// <c>AddressListExpandsEventNoCopyP12</c> flow, but is PREDICATE-AWARE
+        /// for the Unit Palette row scan (which differs from #501's pointer-first
+        /// scan):
+        /// <list type="bullet">
+        ///   <item><b>Real count, not the sentinel count.</b> <see cref="GetListCount"/>
+        ///         includes the trailing <c>AddrResult(0,"Unit Palette Editor",0)</c>
+        ///         sentinel, so the current row count is <c>GetListCount() - 1</c>.</item>
+        ///   <item><b>Full all-zero terminator row.</b> <see cref="LoadList"/>
+        ///         accepts a row when <c>P12</c> is a valid pointer OR
+        ///         (<c>P12==0 &amp;&amp; name!=0</c>), and stops only on a full
+        ///         zero row. A bare <c>0xFFFFFFFF</c> dword terminator would be a
+        ///         phantom valid row, so <see cref="DataExpansionCore.ExpandTableTo"/>
+        ///         is called with <c>fullZeroTerminatorRow: true</c>.</item>
+        ///   <item><b>FIRST-fill + clear P12.</b> New rows copy the 12-byte
+        ///         identifier of a non-empty TEMPLATE row and clear their own
+        ///         <c>P12</c> (so each new row is scan-visible as
+        ///         <c>P12==0 &amp;&amp; name!=0</c>), mirroring WF
+        ///         <c>ExpandsFillOption.FIRST</c> + <c>NoCopyP12</c>.</item>
+        ///   <item><b>All-reference repoint.</b> After the table moves,
+        ///         <see cref="DataExpansionCore.RepointAllReferences"/> repoints
+        ///         every raw 32-bit + ARM-Thumb LDR literal-pool reference to the
+        ///         old base (0 repointed is success — do not roll back).</item>
+        /// </list>
+        ///
+        /// <para>Validate-all-before-mutate: when NO non-empty template row
+        /// exists (every row's first identifier dword is zero), this returns an
+        /// error string WITHOUT mutating the ROM. The caller wraps the call in an
+        /// <c>UndoService.Begin/Commit/Rollback</c> scope; all writes here use the
+        /// AMBIENT (no-undo) overloads so they are auto-tracked by that scope —
+        /// the <paramref name="undo"/> param exists for API parity only.</para>
+        /// </summary>
+        /// <param name="newCount">Target row count (must be &gt;= current real count).</param>
+        /// <param name="undo">Unused; present for API parity with sibling ExpandList
+        /// methods. Writes are ambient (the caller opens the undo scope).</param>
+        /// <returns>Empty on success, error string otherwise.</returns>
+        public string ExpandList(uint newCount, Undo.UndoData? undo)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null) return R._("ROM not loaded.");
+
+            uint pointer = rom.RomInfo != null ? rom.RomInfo.image_unit_palette_pointer : 0;
+            if (pointer == 0) return R._("Unit palette table not found in this ROM.");
+            if (!U.isSafetyOffset(rom.p32(pointer), rom))
+                return R._("Unit palette table pointer is invalid.");
+
+            // Real row count excludes the trailing sentinel row that LoadList
+            // appends (AddrResult(0, "Unit Palette Editor", 0)).
+            int listCount = GetListCount();
+            int realCount = listCount - 1;
+            if (realCount < 1)
+                return R._("Cannot expand: the unit-palette list has no rows.");
+            if (newCount > 512)
+                return R._("New count ({0}) exceeds the maximum of 512.", newCount);
+            if (newCount < (uint)realCount)
+                return R._("New count ({0}) must be greater than or equal to current count ({1}).",
+                    newCount, realCount);
+            if (newCount == (uint)realCount)
+                return ""; // no-op success
+
+            // Template-row selection (guardrail #1): the FIRST row whose first
+            // identifier dword is non-zero. If NONE exists, refuse WITHOUT
+            // mutating anything.
+            uint oldBase = rom.p32(pointer);
+            int templateIdx = -1;
+            for (int i = 0; i < realCount; i++)
+            {
+                if (rom.u32(oldBase + (uint)(i * (int)SIZE) + 0) != 0)
+                {
+                    templateIdx = i;
+                    break;
+                }
+            }
+            if (templateIdx < 0)
+                return R._("Cannot expand: no non-empty template row was found.");
+
+            // Grow the table with a FULL all-zero 16-byte terminator row.
+            var result = DataExpansionCore.ExpandTableTo(
+                rom, pointer, SIZE, (uint)realCount, newCount, fullZeroTerminatorRow: true);
+            if (!result.Success)
+                return result.Error ?? R._("Table expansion failed.");
+
+            // Repoint EVERY raw 32-bit + ARM-Thumb LDR literal-pool reference to
+            // the old base BEFORE the FIRST-fill (per review). 0 repointed (clean
+            // ROM, no secondary refs) is SUCCESS — do NOT roll back on 0. Pass
+            // null so the caller's ambient UndoService scope auto-tracks the writes.
+            DataExpansionCore.RepointAllReferences(rom, oldBase, result.NewBaseAddress, null);
+
+            // FIRST-fill the new rows from the template row's 12 identifier bytes,
+            // then clear each new row's P12 (WF ExpandsFillOption.FIRST +
+            // AddressListExpandsEventNoCopyP12) so each new row is scan-visible
+            // (P12==0 && name!=0). All writes ambient (caller owns the undo scope).
+            byte[] templateIdent = rom.getBinaryData(
+                result.NewBaseAddress + (uint)(templateIdx * (int)SIZE), 12);
+            for (int i = realCount; i < (int)newCount; i++)
+            {
+                uint rowAddr = result.NewBaseAddress + (uint)(i * (int)SIZE);
+                rom.write_range(rowAddr, templateIdent);
+                rom.write_u32(rowAddr + 12, 0);
+            }
+
+            return "";
+        }
 
         /// <summary>Get the base address of the unit-palette table as a hex string, or "" if unavailable.</summary>
         public string LoadListBaseAddress()

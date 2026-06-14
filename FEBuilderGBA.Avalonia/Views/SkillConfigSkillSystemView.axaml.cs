@@ -3,6 +3,7 @@ using System;
 using global::Avalonia.Controls;
 using global::Avalonia.Interactivity;
 using global::Avalonia.Media.Imaging;
+using FEBuilderGBA.Avalonia.Dialogs;
 using FEBuilderGBA.Avalonia.Services;
 using FEBuilderGBA.Avalonia.ViewModels;
 
@@ -23,6 +24,7 @@ namespace FEBuilderGBA.Avalonia.Views
     {
         readonly SkillConfigSkillSystemViewModel _vm = new();
         readonly UndoService _undoService = new();
+        readonly SkillConfigAnimePreview _animePreview = new();
         bool _suppressZoomChange;
         bool _suppressFrameChange;
         Bitmap? _currentIconBitmap;
@@ -41,6 +43,7 @@ namespace FEBuilderGBA.Avalonia.Views
             {
                 DisposeBitmap(ref _currentIconBitmap);
                 DisposeBitmap(ref _currentPreviewBitmap);
+                _animePreview.Clear();
             };
         }
 
@@ -153,20 +156,27 @@ namespace FEBuilderGBA.Avalonia.Views
 
             if (_vm.IsAnimationValid)
             {
+                // #1010 — render the per-frame preview via the cross-platform
+                // READ-ONLY SkillSystemsAnimeExportCore decode (cached by anime
+                // pointer in _animePreview).
+                bool hasFrames = _animePreview.Load(CoreState.ROM, _vm.AnimationPointer);
+                int frameCount = _animePreview.FrameCount;
+                // Clamp SelectedFrame into range BEFORE rendering (a shorter
+                // animation on a same-row pointer change).
+                if (frameCount > 0 && _vm.SelectedFrame >= (uint)frameCount) _vm.SelectedFrame = (uint)(frameCount - 1);
                 _suppressFrameChange = true;
-                try { ShowFrameUpDown.Value = _vm.SelectedFrame; }
+                try
+                {
+                    ShowFrameUpDown.Maximum = Math.Max(0, frameCount - 1);
+                    ShowFrameUpDown.Value = _vm.SelectedFrame;
+                }
                 finally { _suppressFrameChange = false; }
-
                 BinInfoBox.Text = _vm.BinInfoText;
-                // Real frame rendering depends on the WinForms-only
-                // ImageUtilSkillSystemsAnimeCreator (#500). Until that
-                // moves to Core, leave the preview Image blank but show the
-                // animation address text so the user knows the pointer is
-                // valid.
-                SetPreviewBitmap(null);
+                SetPreviewBitmap(hasFrames ? _animePreview.TryGetFrameBitmap((int)_vm.SelectedFrame) : null);
             }
             else
             {
+                _animePreview.Clear();
                 SetPreviewBitmap(null);
                 BinInfoBox.Text = "";
             }
@@ -186,6 +196,10 @@ namespace FEBuilderGBA.Avalonia.Views
                 _vm.Write();
                 _undoService.Commit();
                 _vm.MarkClean();
+                // #1010 — the animation pointer may have changed; drop the
+                // cached decode and re-render the preview for the new pointer.
+                _animePreview.Clear();
+                UpdateUI();
             }
             catch (Exception ex)
             {
@@ -221,44 +235,254 @@ namespace FEBuilderGBA.Avalonia.Views
         // #500. Mirrors the exact pattern used by #433 and PR #516.
         // -----------------------------------------------------------
 
-        void ImageImport_Click(object? sender, RoutedEventArgs e)
+        // Skill palette pointer is a fixed ROM location for SkillSystem (and
+        // CSkillSys) — mirrors WinForms `SkillPalettePointer = 0x22370`.
+        const uint SKILL_PALETTE_POINTER = 0x22370;
+
+        // #898 — real skill-icon Image Import/Export via the shared
+        // SkillConfigIconIoHelper. Icon byte-address is the striped table
+        // slot IconBaseAddress + 128 * SelectedId (re-derived fresh here),
+        // and the palette is the fixed skill-palette pointer.
+        async void ImageImport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigSkillSystemView.ImageImport_Click invoked - disabled until Core extraction lands (#500)");
+            ROM rom = CoreState.ROM;
+            if (rom == null || rom.RomInfo == null || !_vm.IsLoaded) return;
+            if (_vm.IconBaseAddress == 0) return;
+            if (!U.isSafetyOffset(SKILL_PALETTE_POINTER + 3, rom)) return;
+
+            uint iconByteAddr = _vm.IconBaseAddress + SkillConfigIconIoHelper.IconByteSize * _vm.SelectedId;
+            uint paletteAddr = rom.p32(SKILL_PALETTE_POINTER);
+
+            string? err = await SkillConfigIconIoHelper.ImportIconAsync(
+                this, rom, iconByteAddr, paletteAddr, _undoService);
+            if (err == null) return; // user cancelled — do not refresh.
+            if (err != "")
+            {
+                Log.Notify("SkillConfigSkillSystemView.ImageImport_Click: " + err);
+                return;
+            }
+
+            // Success: refresh the icon preview + list thumbnails.
+            UpdateUI();
+            LoadList();
+            EntryList.SelectAddress(_vm.CurrentAddr);
         }
 
-        void ImageExport_Click(object? sender, RoutedEventArgs e)
+        async void ImageExport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigSkillSystemView.ImageExport_Click invoked - disabled until Core extraction lands (#500)");
+            ROM rom = CoreState.ROM;
+            if (rom == null || rom.RomInfo == null || !_vm.IsLoaded) return;
+            if (_vm.IconBaseAddress == 0) return;
+            if (!U.isSafetyOffset(SKILL_PALETTE_POINTER + 3, rom)) return;
+
+            uint iconByteAddr = _vm.IconBaseAddress + SkillConfigIconIoHelper.IconByteSize * _vm.SelectedId;
+            uint paletteAddr = rom.p32(SKILL_PALETTE_POINTER);
+
+            await SkillConfigIconIoHelper.ExportIconAsync(this, rom, iconByteAddr, paletteAddr);
         }
 
-        void AnimationImport_Click(object? sender, RoutedEventArgs e)
+        // #913 SLICE 1 — real skill-anime import via the cross-platform
+        // SkillSystemsAnimeImportCore seam (FE8J path; FE8U shows a clean
+        // not-supported message and mutates ZERO bytes).
+        async void AnimationImport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigSkillSystemView.AnimationImport_Click invoked - disabled until Core extraction lands (#500)");
+            if (!_vm.IsLoaded) return;
+            bool ok = await SkillConfigAnimeImportHelper.ImportAsync(
+                this, _vm.AnimationPointer, _undoService);
+            if (!ok) return;
+
+            // Success: the animation bytes changed — drop the cached decode,
+            // then refresh the animation preview + the list thumbnails.
+            _animePreview.Clear();
+            OnSelected(_vm.CurrentAddr);
+            LoadList();
+            EntryList.SelectAddress(_vm.CurrentAddr);
         }
 
-        void AnimationExport_Click(object? sender, RoutedEventArgs e)
+        // #910 — real animation export via the cross-platform
+        // SkillSystemsAnimeExportCore seam (.txt script + per-frame PNGs, or
+        // an animated GIF). Import stays WinForms-side (separate PR).
+        async void AnimationExport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigSkillSystemView.AnimationExport_Click invoked - disabled until Core extraction lands (#500)");
+            if (!_vm.IsLoaded) return;
+            await SkillConfigAnimeExportHelper.ExportAsync(this, _vm.AnimationPointer, _vm.SelectedId);
         }
 
         void JumpToEditor_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigSkillSystemView.JumpToEditor_Click invoked - disabled until ToolAnimationCreatorView.Init lands (#500)");
+            // #1115: seed the Animation Creator from the selected skill's animation
+            // (read-only). Probe-before-open so a 0/empty pointer shows an honest
+            // message instead of a blank Creator. Replaces the #996 carve-out.
+            if (!_vm.IsLoaded) return;
+            SkillConfigAnimeJumpHelper.JumpToCreator(
+                _vm.SelectedId, _vm.AnimationPointer, "SkillConfigSkillSystemView");
         }
 
-        void BulkImport_Click(object? sender, RoutedEventArgs e)
+        // #923 SLICE 2 — real bulk IMPORT via the cross-platform BULK-ATOMIC
+        // SkillConfigSkillSystemBulkImportCore seam. Reads a *.SkillConfig.tsv
+        // (one `textID<TAB>animePtr` row per skill) and, for each skill with an
+        // `anime{i:hex}/anime.txt`, re-imports the animation. The whole multi-
+        // skill import is ONE atomic transaction (one undo record on success,
+        // byte-identical rollback on any fault).
+        async void BulkImport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigSkillSystemView.BulkImport_Click invoked - disabled until Core extraction lands (#500)");
+            ROM rom = CoreState.ROM;
+            if (rom == null || rom.RomInfo == null || !_vm.IsLoaded) return;
+
+            string? path = await FileDialogHelper.OpenFile(this,
+                R._("Bulk Import Skill Config"), "*.SkillConfig.tsv");
+            if (string.IsNullOrEmpty(path)) return;
+
+            try
+            {
+                string basedir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)) ?? ".";
+
+                // The Core seam resolves each skill i's anime dir via this
+                // resolver, then SCOPES every relative frame-PNG name to THAT dir
+                // before calling the imageProvider (so two skills with distinct
+                // anime{i}/ dirs but same-named PNGs each load their own frames —
+                // #925 thread 1). The imageProvider therefore receives an already-
+                // scoped path; it just loads + quantizes it (rooted as-is; a bare
+                // relative fallback is resolved against basedir for safety).
+                Func<uint, string> dirResolver = i =>
+                    System.IO.Path.Combine(basedir, "anime" + U.ToHexString(i));
+
+                SkillSystemsAnimeImportCore.ImageProvider imageProvider = pngName =>
+                {
+                    string full = System.IO.Path.IsPathRooted(pngName)
+                        ? pngName
+                        : System.IO.Path.Combine(basedir, pngName);
+                    try
+                    {
+                        var lr = ImageImportService.LoadAndQuantizeFromFile(
+                            full, 0, 0, maxColors: 16, strictSize: false,
+                            requireTileMultiple: false);
+                        if (lr == null || !lr.Success || lr.IndexedPixels == null)
+                            return null;
+                        return (lr.IndexedPixels, lr.Width, lr.Height, lr.GBAPalette);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error("SkillConfigSkillSystemView.BulkImport image load failed: {0}", ex.Message);
+                        return null;
+                    }
+                };
+
+                // The Core seam OWNS the undo transaction: it opens its OWN single
+                // ambient BeginUndoScope wrapping the whole loop, restores the ROM
+                // byte-identical on any fault (pushing ZERO records), and pushes
+                // exactly ONE undo record on success. So we do NOT open a UI
+                // UndoService scope here (that would clobber the Core's ambient
+                // scope — BeginUndoScope is non-reentrant). #923 H3.
+                string err;
+                try
+                {
+                    err = SkillConfigSkillSystemBulkImportCore.ImportAll(
+                        rom, _vm.TextPointerLocation, _vm.AnimePointerLocation,
+                        path, dirResolver, imageProvider);
+                }
+                catch (Exception ex)
+                {
+                    err = ex.Message;
+                }
+
+                if (!string.IsNullOrEmpty(err))
+                {
+                    CoreState.Services?.ShowError(R._("Bulk import failed: {0}", err));
+                    return;
+                }
+
+                CoreState.Services?.ShowInfo(R._("Bulk imported from: {0}", path));
+
+                // Success: the animation bytes / pointer slots changed — drop the
+                // cached decode, then refresh the VM + reload the list/preview.
+                _animePreview.Clear();
+                OnSelected(_vm.CurrentAddr);
+                LoadList();
+                EntryList.SelectAddress(_vm.CurrentAddr);
+            }
+            catch (Exception ex)
+            {
+                CoreState.Services?.ShowError(R._("Bulk import failed: {0}", ex.Message));
+            }
         }
 
-        void BulkExport_Click(object? sender, RoutedEventArgs e)
+        // #920 SLICE 1 — real bulk EXPORT via the cross-platform READ-ONLY
+        // SkillConfigSkillSystemBulkExportCore seam. Writes a *.SkillConfig.tsv
+        // (one `textID<TAB>animePtr` row per skill) and, for each extended-area
+        // anime, an `anime{i:hex}/anime.txt` script + per-frame PNGs. Bulk
+        // IMPORT stays a no-op until SLICE 2 (#920) lands.
+        async void BulkExport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigSkillSystemView.BulkExport_Click invoked - disabled until Core extraction lands (#500)");
-        }
+            ROM rom = CoreState.ROM;
+            if (rom == null || rom.RomInfo == null || !_vm.IsLoaded) return;
 
-        void ListExpand_Click(object? sender, RoutedEventArgs e)
-        {
-            Log.Debug("SkillConfigSkillSystemView.ListExpand_Click invoked - disabled until Core extraction lands (#500)");
+            string suggested = "skills.SkillConfig.tsv";
+            string? path = await FileDialogHelper.SaveFile(this,
+                R._("Bulk Export Skill Config"),
+                new[] { (R._("Skill Config TSV"), "*.SkillConfig.tsv") },
+                suggested);
+            if (string.IsNullOrEmpty(path)) return;
+
+            try
+            {
+                string basedir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)) ?? ".";
+
+                // writeAnime: render each extended-area animation's frames to
+                // PNGs under `anime{i:hex}/` + write `anime.txt`. Dispose each
+                // UNIQUE IImage exactly once (the #912 hygiene lesson — the Core
+                // export caches one IImage per OBJ id, so duplicate frames share
+                // an instance).
+                Action<SkillConfigBulkAnimeEntry> writeAnime = entry =>
+                {
+                    string animedir = System.IO.Path.Combine(basedir, entry.AnimeDirName);
+                    System.IO.Directory.CreateDirectory(animedir);
+
+                    string basename = "anime_";
+                    var lines = SkillSystemsAnimeExportCore.BuildScriptLines(entry.Result, basename);
+
+                    // #922 review thread 2: track every UNIQUE frame IImage (the
+                    // Core export caches one IImage per OBJ id, so duplicate
+                    // frames share an instance) and dispose them in a finally,
+                    // so a mid-loop Save() throw (IO/permission/disk full) can't
+                    // leak the remaining native bitmaps.
+                    var unique = new System.Collections.Generic.HashSet<IImage>();
+                    try
+                    {
+                        var written = new System.Collections.Generic.HashSet<uint>();
+                        foreach (var f in entry.Result.Frames)
+                        {
+                            unique.Add(f.Image);
+                            if (!written.Add(f.Id)) continue;
+                            string imagefilename = basename.Replace(" ", "_") + "g" + f.Id.ToString("000") + ".png";
+                            f.Image.Save(System.IO.Path.Combine(animedir, imagefilename));
+                        }
+
+                        System.IO.File.WriteAllLines(System.IO.Path.Combine(animedir, "anime.txt"), lines);
+                    }
+                    finally
+                    {
+                        foreach (var img in unique)
+                        {
+                            try { img.Dispose(); } catch { /* swallow */ }
+                        }
+                    }
+                };
+
+                string err = SkillConfigSkillSystemBulkExportCore.ExportAll(
+                    rom, _vm.TextPointerLocation, _vm.AnimePointerLocation, path, writeAnime);
+
+                if (!string.IsNullOrEmpty(err))
+                {
+                    CoreState.Services?.ShowError(R._("Bulk export failed: {0}", err));
+                    return;
+                }
+                CoreState.Services?.ShowInfo(R._("Bulk exported to: {0}", path));
+            }
+            catch (Exception ex)
+            {
+                CoreState.Services?.ShowError(R._("Bulk export failed: {0}", ex.Message));
+            }
         }
 
         void ShowFrameUpDown_ValueChanged(object? sender, NumericUpDownValueChangedEventArgs e)
@@ -267,7 +491,8 @@ namespace FEBuilderGBA.Avalonia.Views
             if (!_vm.IsAnimationValid) return;
             _vm.SelectedFrame = (uint)(ShowFrameUpDown.Value ?? 0);
             BinInfoBox.Text = _vm.BinInfoText;
-            // Real per-frame rendering pending #500.
+            // #1010 — render the selected frame from the cached decode.
+            SetPreviewBitmap(_animePreview.TryGetFrameBitmap((int)_vm.SelectedFrame));
         }
 
         void ShowZoomComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)

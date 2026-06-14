@@ -543,6 +543,11 @@ namespace FEBuilderGBA.Avalonia.Services
             // WF<->AV form pair here so JumpParityScanner can resolve the
             // cross-ref even though it is not in the EditorMap seed.
             { "SkillAssignmentClassSkillSystemView", "SkillAssignmentClassSkillSystemForm" },
+            // #995 - SkillAssignmentUnitSkillSystemForm is patch-dependent on
+            // SkillSystems and lives in ContextDependentEditors. Declare the
+            // WF<->AV form pair here so JumpParityScanner can resolve the
+            // cross-ref even though it is not in the EditorMap seed.
+            { "SkillAssignmentUnitSkillSystemView", "SkillAssignmentUnitSkillSystemForm" },
             // #429 — ImageBGForm jumps to the BG-mode-select popup (16/255/224)
             // under the BG256Color patch. Popup is a dialog (NoListEditor);
             // declare the WF↔AV form pair so JumpParityScanner can resolve it.
@@ -982,9 +987,12 @@ namespace FEBuilderGBA.Avalonia.Services
             return result;
         }
 
-        /// <summary>Build terrain name list matching TerrainNameEditorViewModel.
-        /// The Avalonia VM treats each entry as a u16 text ID (2 bytes per entry),
-        /// while WinForms uses 4 bytes (pointer). We match the Avalonia VM format.</summary>
+        /// <summary>Build terrain name list matching TerrainNameEditorViewModel
+        /// (#5 of #943). DUAL-MODE, mirroring WinForms MapTerrainNameForm:
+        ///   * multibyte (JP) — 4-byte entries, each a pointer to a raw string;
+        ///     stop on !U.isPointerOrNULL(u32(addr)).
+        ///   * non-multibyte (US/EU) — 2-byte Huffman text IDs; stop on textId==0.
+        /// </summary>
         static List<AddrResult> BuildTerrainNameList(ROM rom)
         {
             uint ptr = rom.RomInfo.map_terrain_name_pointer;
@@ -992,21 +1000,54 @@ namespace FEBuilderGBA.Avalonia.Services
             uint baseAddr = rom.p32(ptr);
             if (!U.isSafetyOffset(baseAddr)) return new List<AddrResult>();
 
-            const uint blockSize = 2;
             var result = new List<AddrResult>();
-            for (uint i = 0; i < 0x100; i++)
+
+            if (rom.RomInfo.is_multibyte)
             {
-                uint addr = baseAddr + i * blockSize;
-                if (addr + blockSize > (uint)rom.Data.Length) break;
+                const uint blockSize = 4;
+                for (uint i = 0; i < 0x100; i++)
+                {
+                    uint addr = baseAddr + i * blockSize;
+                    if (addr + blockSize > (uint)rom.Data.Length) break;
 
-                uint textId = rom.u16(addr);
-                string decoded;
-                try { decoded = GetTextById(textId); }
-                catch { decoded = "???"; }
+                    uint rawPtr = rom.u32(addr);
+                    if (!U.isPointerOrNULL(rawPtr)) break;
 
-                string name = U.ToHexString(i) + " " + decoded;
-                result.Add(new AddrResult(addr, name, i));
+                    string decoded = "";
+                    if (U.isPointer(rawPtr))
+                    {
+                        uint strOff = U.toOffset(rawPtr);
+                        if (U.isSafetyOffset(strOff))
+                        {
+                            try { decoded = rom.getString(strOff); }
+                            catch { decoded = ""; }
+                        }
+                    }
+
+                    string name = U.ToHexString(i) + " " + decoded;
+                    result.Add(new AddrResult(addr, name, i));
+                }
             }
+            else
+            {
+                const uint blockSize = 2;
+                for (uint i = 0; i < 0x100; i++)
+                {
+                    uint addr = baseAddr + i * blockSize;
+                    if (addr + blockSize > (uint)rom.Data.Length) break;
+
+                    uint textId = rom.u16(addr);
+                    if (textId == 0x0000) break;
+
+                    string decoded;
+                    try { decoded = GetTextById(textId); }
+                    catch { decoded = "???"; }
+
+                    string name = U.ToHexString(i) + " " + decoded;
+                    result.Add(new AddrResult(addr, name, i));
+                }
+            }
+
             return result;
         }
 
@@ -1058,7 +1099,12 @@ namespace FEBuilderGBA.Avalonia.Services
                 uint songId = rom.u32(addr + 4);
                 // 1-based ROM-stored unit ID (matches SoundBossBGMViewerViewModel).
                 string unitName = NameResolver.GetUnitNameByOneBasedId(unitId);
-                string name = $"{U.ToHexString(unitId)} {unitName} Song:0x{songId:X08}";
+                // Lockstep with SoundBossBGMViewerViewModel — WinForms format:
+                //   "{unitHex} {unitName} : {songHex}{songName}" (#961 W2a).
+                // Use the Core resolver DIRECTLY so an unresolved id yields "" (no
+                // "Song 0x.." placeholder duplication) — same as the VM (#962 review).
+                string songName = SongNameResolverCore.GetSongName(rom, songId);
+                string name = $"{U.ToHexString(unitId)} {unitName} : {U.ToHexString(songId)}{songName}";
                 result.Add(new AddrResult(addr, name, i));
             }
             return result;
@@ -2031,13 +2077,19 @@ namespace FEBuilderGBA.Avalonia.Services
         }
 
         /// <summary>Build map tile animation list matching MapTileAnimationViewModel.
-        /// Uses map_tileanime1_pointer — 4-byte pointer entries, stops at 0xFFFFFFFF.</summary>
+        /// Uses map_tileanime1_pointer — 4-byte pointer entries, stops at 0xFFFFFFFF.
+        /// Lockstep with MapTileAnimationViewModel.LoadMapTileAnimationList (#952,
+        /// #11): each slot index IS the ANIMATION PLIST id, resolved to an
+        /// "ANIME1/ANIME2 MapName" label via the shared resolver instead of a
+        /// raw 0x… pointer.</summary>
         static List<AddrResult> BuildMapTileAnimationList(ROM rom)
         {
             uint ptr = rom.RomInfo.map_tileanime1_pointer;
             if (ptr == 0) return new List<AddrResult>();
             uint baseAddr = rom.p32(ptr);
             if (!U.isSafetyOffset(baseAddr)) return new List<AddrResult>();
+
+            var cache = MapPListResolverCore.BuildCache(rom);
 
             const uint blockSize = 4;
             var result = new List<AddrResult>();
@@ -2049,11 +2101,9 @@ namespace FEBuilderGBA.Avalonia.Services
                 uint pointer = rom.u32(addr);
                 if (pointer == 0xFFFFFFFF) break;
 
-                // Match Avalonia VM format
-                string ptrStr = U.isPointer(pointer)
-                    ? "0x" + pointer.ToString("X08")
-                    : (pointer == 0 ? "NULL" : "0x" + pointer.ToString("X08"));
-                string name = U.ToHexString(i) + " TileAnim " + ptrStr;
+                string label = MapPListResolverCore.ResolveLabel(
+                    rom, MapChangeCore.PlistType.ANIMATION, i, cache);
+                string name = U.ToHexString(i) + " " + label;
                 result.Add(new AddrResult(addr, name, i));
             }
             return result;
@@ -2445,6 +2495,80 @@ namespace FEBuilderGBA.Avalonia.Services
             return BuildEventHaikuFE6List(rom);
         }
 
+        // ------------------------------------------------------------------
+        // FE7 12-byte secondary tables (#957 W1b) — these tables live behind a
+        // Table filter combo (NOT the default render), so they are NOT in the
+        // EditorMap registration; tests call these golden builders directly to
+        // lockstep the secondary EventHaikuFE7ViewModel / EventBattleTalkFE7ViewModel
+        // lists against an independent ROM walk.
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Build the FE7 N1 tutorial death-quote list (Lyn = tutorial 1,
+        /// Eliwood = tutorial 2) — 12-byte entries, stop when u8(addr)==0.
+        /// Mirrors WinForms EventHaikuFE7Form.N1_Init + the N1 list draw
+        /// (single unit name) and EventHaikuFE7ViewModel.LoadList(Tutorial*).
+        /// </summary>
+        static List<AddrResult> BuildEventHaikuFE7TutorialList(ROM rom, uint pointerLocation)
+        {
+            if (pointerLocation == 0) return new List<AddrResult>();
+            uint baseAddr = rom.p32(pointerLocation);
+            if (!U.isSafetyOffset(baseAddr)) return new List<AddrResult>();
+
+            const uint blockSize = 12;
+            var result = new List<AddrResult>();
+            for (int i = 0; i < 256; i++)
+            {
+                uint addr = baseAddr + (uint)(i * blockSize);
+                if (addr + blockSize > (uint)rom.Data.Length) break;
+                if (rom.u8(addr) == 0x00) break;
+
+                uint unitId = rom.u8(addr);
+                // 1-based ROM-stored unit ID (matches EventHaikuFE7ViewModel).
+                string unitName = NameResolver.GetUnitNameByOneBasedId(unitId);
+                result.Add(new AddrResult(addr, $"0x{i:X2} {unitName}", (uint)i));
+            }
+            return result;
+        }
+
+        /// <summary>Golden list for the FE7 Lyn-chapter tutorial death quotes (event_haiku_tutorial_1_pointer).</summary>
+        public static List<AddrResult> BuildEventHaikuFE7Tutorial1List(ROM rom)
+            => BuildEventHaikuFE7TutorialList(rom, rom.RomInfo.event_haiku_tutorial_1_pointer);
+
+        /// <summary>Golden list for the FE7 Eliwood-chapter tutorial death quotes (event_haiku_tutorial_2_pointer).</summary>
+        public static List<AddrResult> BuildEventHaikuFE7Tutorial2List(ROM rom)
+            => BuildEventHaikuFE7TutorialList(rom, rom.RomInfo.event_haiku_tutorial_2_pointer);
+
+        /// <summary>
+        /// Build the FE7 secondary battle-talk list (event_ballte_talk2_pointer)
+        /// — 12-byte entries, stop when u8(addr)==0 || u8(addr)==0xFF; the
+        /// secondary list draws only the single unit name. Mirrors WinForms
+        /// EventBattleTalkFE7Form.N1_Init + EventBattleTalkFE7ViewModel
+        /// .LoadList(Secondary).
+        /// </summary>
+        public static List<AddrResult> BuildEventBattleTalkFE7SecondaryList(ROM rom)
+        {
+            uint ptr = rom.RomInfo.event_ballte_talk2_pointer;
+            if (ptr == 0) return new List<AddrResult>();
+            uint baseAddr = rom.p32(ptr);
+            if (!U.isSafetyOffset(baseAddr)) return new List<AddrResult>();
+
+            const uint blockSize = 12;
+            var result = new List<AddrResult>();
+            for (int i = 0; i < 256; i++)
+            {
+                uint addr = baseAddr + (uint)(i * blockSize);
+                if (addr + blockSize > (uint)rom.Data.Length) break;
+                uint unit = rom.u8(addr);
+                if (unit == 0 || unit == 0xFF) break;
+
+                // 1-based ROM-stored unit ID (matches EventBattleTalkFE7ViewModel).
+                string unitName = NameResolver.GetUnitNameByOneBasedId(unit);
+                result.Add(new AddrResult(addr, $"0x{i:X2} {unitName}", (uint)i));
+            }
+            return result;
+        }
+
         /// <summary>Build FE7 event force sortie list — fixed 23 entries starting at map 0x17.</summary>
         static List<AddrResult> BuildEventForceSortieFE7List(ROM rom)
         {
@@ -2477,6 +2601,11 @@ namespace FEBuilderGBA.Avalonia.Services
             uint baseAddr = rom.p32(ptr);
             if (!U.isSafetyOffset(baseAddr)) return new List<AddrResult>();
 
+            // Lockstep with MapChangeViewModel.LoadMapChangeList (#952):
+            // resolve each CHANGE-type PLIST row to a "MAPCHANGE MapName"
+            // label via the shared resolver instead of a raw 0x… pointer.
+            var cache = MapPListResolverCore.BuildCache(rom);
+
             var result = new List<AddrResult>();
             for (uint i = 0; i < 0x200; i++)
             {
@@ -2486,10 +2615,9 @@ namespace FEBuilderGBA.Avalonia.Services
                 uint pointer = rom.u32(addr);
                 if (pointer == 0xFFFFFFFF) break;
 
-                string ptrStr = U.isPointer(pointer)
-                    ? "0x" + pointer.ToString("X08")
-                    : (pointer == 0 ? "NULL" : "0x" + pointer.ToString("X08"));
-                string name = U.ToHexString(i) + " Change " + ptrStr;
+                string label = MapPListResolverCore.ResolveLabel(
+                    rom, MapChangeCore.PlistType.CHANGE, i, cache);
+                string name = U.ToHexString(i) + " " + label;
                 result.Add(new AddrResult(addr, name, i));
             }
             return result;
@@ -2503,8 +2631,15 @@ namespace FEBuilderGBA.Avalonia.Services
             uint baseAddr = rom.p32(ptr);
             if (!U.isSafetyOffset(baseAddr)) return new List<AddrResult>();
 
-            uint limit = rom.RomInfo.map_map_pointer_list_default_size;
+            // Canonical PLIST limit (256 on split layouts) so the golden list
+            // does not truncate vs the VM — keeps VM↔golden in lockstep (#953).
+            uint limit = MapChangeCore.GetPlistLimit(rom);
             if (limit == 0) limit = 256;
+
+            // Lockstep with MapPointerViewModel.LoadMapPointerList default
+            // typeIndex=0 (MAP) (#952): resolve each row to a "MAP MapName"
+            // label via the shared resolver instead of a raw 0x… pointer.
+            var cache = MapPListResolverCore.BuildCache(rom);
 
             var result = new List<AddrResult>();
             for (uint i = 0; i < limit; i++)
@@ -2512,11 +2647,9 @@ namespace FEBuilderGBA.Avalonia.Services
                 uint addr = baseAddr + i * 4;
                 if (addr + 3 >= (uint)rom.Data.Length) break;
 
-                uint pointer = rom.u32(addr);
-                string ptrStr = U.isPointer(pointer)
-                    ? $"0x{pointer:X08}"
-                    : (pointer == 0 ? "NULL" : $"0x{pointer:X08}");
-                string name = $"{U.ToHexString(i)} MAP {ptrStr}";
+                string label = MapPListResolverCore.ResolveLabel(
+                    rom, MapChangeCore.PlistType.MAP, i, cache);
+                string name = $"{U.ToHexString(i)} {label}";
                 result.Add(new AddrResult(addr, name, i));
             }
             return result;
@@ -2776,7 +2909,10 @@ namespace FEBuilderGBA.Avalonia.Services
                 uint imgPtr = rom.u32(addr + 4);
                 if (!U.isPointer(imgPtr)) break;
 
-                string name = U.ToHexString(i) + " WaitIcon";
+                // #991: append the owning class name (lockstep with
+                // ImageUnitWaitIconViewModel.LoadList — golden test gated).
+                string className = FEBuilderGBA.Core.ClassFormCore.GetClassNameWhereWaitIconId(rom, i);
+                string name = U.ToHexString(i) + U.SA(className) + " WaitIcon";
                 result.Add(new AddrResult(addr, name, i));
             }
             return result;
@@ -3663,26 +3799,55 @@ namespace FEBuilderGBA.Avalonia.Services
             return result;
         }
 
-        /// <summary>Build map tile animation 1 list — from map_tileanime1_pointer.
-        /// Matches MapTileAnimation1ViewModel.LoadList()/BuildList(): 8-byte blocks, validated by isPointer(u32(addr+4)).</summary>
+        /// <summary>Build map tile animation 1 list — PLIST-based (#955).
+        /// Matches MapTileAnimation1ViewModel.LoadList() EXACTLY: build the
+        /// anime1 PLIST filter via MapTileAnimation1Core.BuildPlistList, pick
+        /// the FIRST non-broken PLIST (regardless of whether its data table is
+        /// empty — the VM returns on the first non-broken row), then scan that
+        /// PLIST's resolved data table (8-byte blocks, validated by
+        /// isPointer(u32(addr+4))). #960: an earlier version skipped a
+        /// non-broken-but-empty PLIST (`if (entries.Count == 0) continue;`),
+        /// which the VM does NOT do — that mismatch made the VM↔golden lockstep
+        /// test flaky on ROMs whose first non-broken PLIST is empty. Lockstep
+        /// with MapTileAnimation1Core.ScanEntries.</summary>
         static List<AddrResult> BuildMapTileAnimation1List(ROM rom)
         {
-            uint ptr = rom.RomInfo.map_tileanime1_pointer;
-            if (ptr == 0) return new List<AddrResult>();
-            uint baseAddr = rom.p32(ptr);
-            if (!U.isSafetyOffset(baseAddr, rom)) return new List<AddrResult>();
-
-            const uint blockSize = 8;
-            var result = new List<AddrResult>();
-            for (int i = 0; i < 256; i++)
+            var plistRows = MapTileAnimation1Core.BuildPlistList(rom);
+            foreach (var row in plistRows)
             {
-                uint addr = baseAddr + (uint)(i * blockSize);
-                if (addr + blockSize > (uint)rom.Data.Length) break;
-                // Validate: P4 must be a valid pointer (same as VM)
-                if (!U.isPointer(rom.u32(addr + 4))) break;
+                if (row.IsBroken) continue;
+                // First non-broken PLIST wins — return its scan even when empty
+                // (mirrors the VM's `return BuildList(row.Addr);` on the first
+                // non-broken row).
+                var entries = MapTileAnimation1Core.ScanEntries(rom, row.Addr, maxRows: 256);
+                var result = new List<AddrResult>(entries.Count);
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    var e = entries[i];
+                    string display = $"0x{i:X2} Interval={e.Wait:X4} Count={e.Length:X4}";
+                    result.Add(new AddrResult(e.Addr, display, (uint)i));
+                }
+                return result;
+            }
+            return new List<AddrResult>();
+        }
 
-                string display = $"0x{i:X2} Interval={rom.u16(addr):X4} Count={rom.u16(addr + 2):X4}";
-                result.Add(new AddrResult(addr, display, (uint)i));
+        /// <summary>Build the MapTileAnimation1 FILTER-combo list (the anime1
+        /// PLIST filter rows shown above the entry list), in lockstep with
+        /// MapTileAnimation1ViewModel.LoadPlistList() →
+        /// MapTileAnimation1Core.BuildPlistList(). Each filter row's Display is
+        /// the resolved "ANIME1 MapName" label via the shared resolver (#952,
+        /// #955), mirroring the anime2 "ANIME2 MapName" filter. Returns one
+        /// AddrResult per filter row (addr = resolved data offset, name =
+        /// resolved Display, tag = PLIST id) so parity tests can compare the VM
+        /// filter labels against this golden builder.</summary>
+        public static List<AddrResult> BuildMapTileAnimation1FilterList(ROM rom)
+        {
+            var rows = MapTileAnimation1Core.BuildPlistList(rom);
+            var result = new List<AddrResult>(rows.Count);
+            foreach (var row in rows)
+            {
+                result.Add(new AddrResult(row.Addr, row.Display, row.Plist));
             }
             return result;
         }
@@ -3728,6 +3893,26 @@ namespace FEBuilderGBA.Avalonia.Services
             }
 
             return new List<AddrResult>();
+        }
+
+        /// <summary>Build the MapTileAnimation2 FILTER-combo list (the PLIST
+        /// filter rows shown above the entry list), in lockstep with
+        /// MapTileAnimation2ViewModel.LoadPlistList() →
+        /// MapTileAnimation2Core.BuildPlistList(). Each filter row's Display is
+        /// the resolved "ANIME2 MapName" label via the shared resolver (#952,
+        /// #11), not the raw "タイルアニメーション2 パレットアニメ:{plist}" string.
+        /// Returns one AddrResult per filter row (addr = resolved data offset,
+        /// name = resolved Display, tag = PLIST id) so parity tests can compare
+        /// the VM filter labels against this golden builder.</summary>
+        public static List<AddrResult> BuildMapTileAnimation2FilterList(ROM rom)
+        {
+            var rows = MapTileAnimation2Core.BuildPlistList(rom);
+            var result = new List<AddrResult>(rows.Count);
+            foreach (var row in rows)
+            {
+                result.Add(new AddrResult(row.Addr, row.Display, row.Plist));
+            }
+            return result;
         }
 
         /// <summary>Build map terrain name (English) list — from map_terrain_name_pointer.

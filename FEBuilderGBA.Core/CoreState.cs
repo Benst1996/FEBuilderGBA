@@ -78,6 +78,20 @@ namespace FEBuilderGBA
         /// compiling).
         /// </summary>
         bool IsHardCodeItem(uint itemId) => false;
+
+        /// <summary>
+        /// Return the loaded ASM/MAP symbol table for the Pointer Tool
+        /// "What is this address?" lookup (#1026). Implementations that have
+        /// no symbol data available return <c>null</c>.
+        ///
+        /// <para>WinForms <c>AsmMapFileAsmCache</c> returns its full WF
+        /// <c>AsmMapFile</c>; the cross-platform <see cref="CoreAsmMapCache"/>
+        /// returns a lazily-built <see cref="AsmMapSymbolFile"/>. The default
+        /// body returns <c>null</c> so <see cref="HeadlessAsmMapCache"/> and any
+        /// external implementor keep compiling — callers null-check before use,
+        /// falling back to a region-class hint only.</para>
+        /// </summary>
+        IAsmMapFile GetAsmMapFile() => null;
     }
 
     /// <summary>
@@ -110,6 +124,19 @@ namespace FEBuilderGBA
         public static ROM ROM { get; set; }
         public static Undo Undo { get; set; }
 
+        // ---- Decomp project open-mode (#1129 slice 1) ----
+        /// <summary>
+        /// Active decomp project, or null in classic ROM mode. When set, the loaded
+        /// ROM is a build PREVIEW of a source tree and is treated as read-only.
+        /// </summary>
+        public static DecompProject DecompProject { get; set; }
+
+        /// <summary>
+        /// Computed: true when a decomp project is open. Cannot go stale because it
+        /// reads <see cref="DecompProject"/> directly.
+        /// </summary>
+        public static bool IsDecompMode => DecompProject != null;
+
         // ---- Types used by Core code via interfaces ----
         public static IEtcCache CommentCache { get; set; }
         public static IEtcCache LintCache { get; set; }
@@ -124,7 +151,7 @@ namespace FEBuilderGBA
         public static EventScript AIScript { get; set; }
         public static FETextEncode FETextEncoder { get; set; }
         public static TextEscape TextEscape { get; set; }
-        public static object UseTextIDCache { get; set; }
+        public static ITextIDCache UseTextIDCache { get; set; }
         public static EtcCacheFLag FlagCache { get; set; }
         public static object ResourceCache { get; set; }
         public static ExportFunction ExportFunction { get; set; }

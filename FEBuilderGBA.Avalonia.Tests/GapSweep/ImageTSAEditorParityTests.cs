@@ -194,8 +194,14 @@ public class ImageTSAEditorParityTests
         Assert.Contains("IsEnabled=\"{Binding IsContextLoaded}\"", m.Value);
     }
 
+    /// <summary>
+    /// #974: the Palette Clipboard button is now WIRED — it packs the 16
+    /// palette entries to GBA 5-5-5 hex and copies to the clipboard. It is no
+    /// longer an IsEnabled=False stub; it is always enabled (reads the grid,
+    /// never writes ROM).
+    /// </summary>
     [Fact]
-    public void View_ClipboardButton_IsExplicitlyInert()
+    public void View_ClipboardButton_IsWiredAndEnabled()
     {
         string axaml = ReadAxaml();
         var rx = new Regex(
@@ -203,11 +209,36 @@ public class ImageTSAEditorParityTests
             RegexOptions.Compiled);
         Match m = rx.Match(axaml);
         Assert.True(m.Success, "Clipboard button tag not found");
-        Assert.Contains("IsEnabled=\"False\"", m.Value);
+        Assert.Contains("Click=\"PaletteClipboard_Click\"", m.Value);
+        Assert.DoesNotContain("IsEnabled=\"False\"", m.Value);
     }
 
+    /// <summary>
+    /// #974: the PaletteClipboard_Click handler must call into the VM's
+    /// BuildPaletteClipboardHex packer and copy via the Avalonia
+    /// IClipboard.SetTextAsync async API (no longer a Log.Notify deferral stub).
+    /// </summary>
     [Fact]
-    public void View_MainImageImportButton_IsExplicitlyInert()
+    public void View_PaletteClipboardHandler_PacksAndCopies()
+    {
+        string source = ReadCodeBehind();
+        Assert.Matches(new Regex(
+            @"void\s+PaletteClipboard_Click[\s\S]*?BuildPaletteClipboardHex",
+            RegexOptions.Compiled), source);
+        Assert.Matches(new Regex(
+            @"void\s+PaletteClipboard_Click[\s\S]*?SetTextAsync",
+            RegexOptions.Compiled), source);
+        Assert.DoesNotMatch(new Regex(
+            @"void\s+PaletteClipboard_Click[\s\S]*?KnownGap:\s*PaletteToClipboard",
+            RegexOptions.Compiled), source);
+    }
+
+    /// <summary>
+    /// #901: the Main Image Import button is now WIRED (tilesheet-only import)
+    /// and context-gated on IsContextLoaded — it is no longer an inert stub.
+    /// </summary>
+    [Fact]
+    public void View_MainImageImportButton_IsContextGated()
     {
         string axaml = ReadAxaml();
         var rx = new Regex(
@@ -215,11 +246,41 @@ public class ImageTSAEditorParityTests
             RegexOptions.Compiled);
         Match m = rx.Match(axaml);
         Assert.True(m.Success, "MainImage Import button tag not found");
-        Assert.Contains("IsEnabled=\"False\"", m.Value);
+        Assert.Contains("Click=\"MainImageImport_Click\"", m.Value);
+        Assert.Contains("IsEnabled=\"{Binding IsContextLoaded}\"", m.Value);
+        Assert.DoesNotContain("IsEnabled=\"False\"", m.Value);
     }
 
+    /// <summary>
+    /// #901: the MainImageImport_Click handler must call into
+    /// TSAImageImportCore.ImportTSAImage (the tilesheet-only Core entry point)
+    /// and no longer be a Log.Notify stub. Regex-declaration style so a
+    /// signature tweak (async void) does not break the assertion.
+    /// </summary>
     [Fact]
-    public void View_MainImageExportButton_IsExplicitlyInert()
+    public void View_MainImageImportHandler_CallsTSAImageImportCore()
+    {
+        string source = ReadCodeBehind();
+        Assert.Matches(new Regex(
+            @"void\s+MainImageImport_Click[\s\S]*?TSAImageImportCore",
+            RegexOptions.Compiled), source);
+        // The handler must wrap the write in the UndoService and roll back
+        // on a non-empty error string.
+        Assert.Matches(new Regex(
+            @"void\s+MainImageImport_Click[\s\S]*?_undoService\.Begin[\s\S]*?_undoService\.(Commit|Rollback)",
+            RegexOptions.Compiled), source);
+        // It must no longer be the old Log.Notify deferral stub.
+        Assert.DoesNotMatch(new Regex(
+            @"void\s+MainImageImport_Click[\s\S]*?Log\.Notify\([^)]*MainImageImportExport",
+            RegexOptions.Compiled), source);
+    }
+
+    /// <summary>
+    /// #974: the Main Image Export button is now WIRED (raw tilesheet PNG
+    /// export) and context-gated on IsContextLoaded — no longer an inert stub.
+    /// </summary>
+    [Fact]
+    public void View_MainImageExportButton_IsContextGated()
     {
         string axaml = ReadAxaml();
         var rx = new Regex(
@@ -227,7 +288,35 @@ public class ImageTSAEditorParityTests
             RegexOptions.Compiled);
         Match m = rx.Match(axaml);
         Assert.True(m.Success, "MainImage Export button tag not found");
-        Assert.Contains("IsEnabled=\"False\"", m.Value);
+        Assert.Contains("Click=\"MainImageExport_Click\"", m.Value);
+        Assert.Contains("IsEnabled=\"{Binding IsContextLoaded}\"", m.Value);
+        Assert.DoesNotContain("IsEnabled=\"False\"", m.Value);
+    }
+
+    /// <summary>
+    /// #974: the MainImageExport_Click handler must render via the VM's
+    /// RenderRawTilesheet seam and export via GbaImageControl.ExportPng — and
+    /// must NOT call ExportPng when the render returns null (Copilot plan-review
+    /// point 2). It must no longer be a Log.Notify deferral stub.
+    /// </summary>
+    [Fact]
+    public void View_MainImageExportHandler_RendersThenExports()
+    {
+        string source = ReadCodeBehind();
+        Assert.Matches(new Regex(
+            @"void\s+MainImageExport_Click[\s\S]*?RenderRawTilesheet",
+            RegexOptions.Compiled), source);
+        Assert.Matches(new Regex(
+            @"void\s+MainImageExport_Click[\s\S]*?ExportPng",
+            RegexOptions.Compiled), source);
+        // Null-render guard must precede the ExportPng call so a stale/previous
+        // bitmap is never exported.
+        Assert.Matches(new Regex(
+            @"void\s+MainImageExport_Click[\s\S]*?if\s*\(\s*img\s*==\s*null\s*\)[\s\S]*?return[\s\S]*?ExportPng",
+            RegexOptions.Compiled), source);
+        Assert.DoesNotMatch(new Regex(
+            @"void\s+MainImageExport_Click[\s\S]*?KnownGap:\s*MainImageExport",
+            RegexOptions.Compiled), source);
     }
 
     /// <summary>
@@ -406,9 +495,10 @@ public class ImageTSAEditorParityTests
             ["メイン画像"] = "Main Image",
             ["画像"] = "Image",
             ["画像読込"] = "Image Import",
-            ["画像取出"] = "Image Export",
-            // KnownGap-covered (no English direct counterpart - they cover deferred behaviour).
-            ["パレット"] = "KnownGap: PaletteToClipboard",
+            ["画像取出"] = "Image Export",     // #974: now a wired Export button caption.
+            // Palette tab header.
+            ["パレット"] = "Palette",
+            // #974: Clipboard is now a wired button caption (was a KnownGap stub).
             ["クリップボード"] = "Clipboard",
         };
 
@@ -432,28 +522,35 @@ public class ImageTSAEditorParityTests
     }
 
     /// <summary>
-    /// The KnownGap comment block must enumerate every deferred WF-only
-    /// surface with a non-empty `reason=`. Mirrors the acceptance-criterion
-    /// audit trail required by Copilot CLI.
+    /// After #1071 the editor has NO remaining per-feature KnownGap markers:
+    /// header-TSA per-cell editing is RESOLVED (the TSA Cell tab now decodes,
+    /// renders, and writes header-TSA via the shared 32-wide stride). The only
+    /// KnownGap line left is the explicit "NONE" sentinel. The previously
+    /// resolved surfaces (PaletteToClipboard / MainImageExport #974, the
+    /// non-header TSAByteWrite #1005, HeaderTSACellWrite #1071) must NOT have
+    /// lingering per-feature KnownGap markers.
     /// </summary>
     [Fact]
-    public void View_KnownGapBlock_HasNonEmptyReasons()
+    public void View_KnownGapBlock_HasNoRemainingPerFeatureGaps()
     {
         string axaml = ReadAxaml();
+        // No per-feature `KnownGap: <feature> reason=` markers remain — every
+        // deferred surface is resolved.
         var rx = new Regex(@"KnownGap:\s*(\S+(?:\s+\S+)*?)\s+reason=(.+?)\s*-->",
             RegexOptions.Compiled);
         var matches = rx.Matches(axaml);
-        Assert.True(matches.Count >= 4,
-            $"AXAML must contain at least 4 KnownGap markers (ChipsetListRender, " +
-            $"TSAByteWrite, PaletteToClipboard, MainImageImportExport); " +
-            $"found {matches.Count}. (BattleCanvasRender was resolved in #808.)");
-        foreach (Match m in matches)
-        {
-            Assert.False(string.IsNullOrWhiteSpace(m.Groups[1].Value),
-                $"KnownGap entry must name a feature: '{m.Value}'");
-            Assert.False(string.IsNullOrWhiteSpace(m.Groups[2].Value),
-                $"KnownGap entry must have a reason: '{m.Value}'");
-        }
+        Assert.Empty(matches);
+
+        // The explicit "NONE" sentinel documents that header-TSA editing is
+        // resolved (#1071).
+        Assert.Contains("KnownGap: NONE", axaml);
+
+        // The now-resolved surfaces must NOT have lingering KnownGap markers.
+        Assert.DoesNotContain("KnownGap: PaletteToClipboard", axaml);
+        Assert.DoesNotContain("KnownGap: MainImageExport", axaml);
+        Assert.DoesNotContain("KnownGap: TSAByteWrite", axaml);
+        // #1071: the HeaderTSACellWrite KnownGap is GONE.
+        Assert.DoesNotContain("KnownGap: HeaderTSACellWrite", axaml);
     }
 
     // -----------------------------------------------------------------
@@ -511,6 +608,34 @@ public class ImageTSAEditorParityTests
 
         // Image / TSA slots are NOT_FOUND -> render is skipped without throwing.
         Assert.Null(vm.RenderMainImage());
+    }
+
+    /// <summary>
+    /// #819: RenderChipList must return null (no throw) when there is no
+    /// context, and when the image pointer slot is NOT_FOUND even with a
+    /// loaded context. The chip list never reads the TSA stream, so a
+    /// NOT_FOUND tsaPointer is irrelevant; only the image slot gates it.
+    /// </summary>
+    [Fact]
+    public void ViewModel_RenderChipList_NotFoundImagePointer_ReturnsNull()
+    {
+        var vm = new ImageTSAEditorViewModel();
+        // No context yet -> null.
+        Assert.Null(vm.RenderChipList());
+
+        vm.Init(
+            width8: 32u,
+            height8: 20u,
+            zimgPointer: U.NOT_FOUND,
+            isHeaderTSA: false,
+            isLZ77TSA: true,
+            tsaPointer: U.NOT_FOUND,
+            palettePointer: U.NOT_FOUND,
+            paletteAddress: 0u,
+            paletteCount: 1);
+
+        // Image slot is NOT_FOUND -> render is skipped without throwing.
+        Assert.Null(vm.RenderChipList());
     }
 
     [Fact]
@@ -832,11 +957,13 @@ public class ImageTSAEditorParityTests
     }
 
     // -----------------------------------------------------------------
-    // Copilot review: Redo buttons must be explicitly inert in AXAML.
+    // #974: Redo buttons are now WIRED to the global Core Undo stack
+    // (CoreState.Undo.RunRedo()). They stay enabled; the handler guards on
+    // CanRedo at runtime (same pattern as the Map Style editor's Redo).
     // -----------------------------------------------------------------
 
     [Fact]
-    public void View_RedoButton_IsExplicitlyInert()
+    public void View_RedoButton_IsWiredAndEnabled()
     {
         string axaml = ReadAxaml();
         var rx = new Regex(
@@ -844,11 +971,12 @@ public class ImageTSAEditorParityTests
             RegexOptions.Compiled);
         Match m = rx.Match(axaml);
         Assert.True(m.Success, "Redo button tag not found");
-        Assert.Contains("IsEnabled=\"False\"", m.Value);
+        Assert.Contains("Click=\"Redo_Click\"", m.Value);
+        Assert.DoesNotContain("IsEnabled=\"False\"", m.Value);
     }
 
     [Fact]
-    public void View_PaletteRedoButton_IsExplicitlyInert()
+    public void View_PaletteRedoButton_IsWiredAndEnabled()
     {
         string axaml = ReadAxaml();
         var rx = new Regex(
@@ -856,7 +984,26 @@ public class ImageTSAEditorParityTests
             RegexOptions.Compiled);
         Match m = rx.Match(axaml);
         Assert.True(m.Success, "PaletteRedo button tag not found");
-        Assert.Contains("IsEnabled=\"False\"", m.Value);
+        Assert.Contains("Click=\"PaletteRedo_Click\"", m.Value);
+        Assert.DoesNotContain("IsEnabled=\"False\"", m.Value);
+    }
+
+    /// <summary>
+    /// #974: the Redo_Click handler must call CoreState.Undo.RunRedo() and
+    /// guard on CanRedo — it is no longer the stale "deferred until
+    /// Core.Undo.RunRedo lands" no-op stub.
+    /// </summary>
+    [Fact]
+    public void View_RedoHandler_CallsRunRedo()
+    {
+        string source = ReadCodeBehind();
+        Assert.Matches(new Regex(
+            @"void\s+Redo_Click[\s\S]*?CoreState\.Undo\.CanRedo",
+            RegexOptions.Compiled), source);
+        Assert.Matches(new Regex(
+            @"void\s+Redo_Click[\s\S]*?CoreState\.Undo\.RunRedo\(\)",
+            RegexOptions.Compiled), source);
+        Assert.DoesNotContain("deferred until Core.Undo.RunRedo lands", source);
     }
 
     // -----------------------------------------------------------------
@@ -898,12 +1045,18 @@ public class ImageTSAEditorParityTests
             RegexOptions.Compiled), source);
     }
 
+    /// <summary>
+    /// #974: the constructor no longer disables the Redo buttons (Redo is
+    /// wired to CoreState.Undo.RunRedo). The old
+    /// `RedoButton.IsEnabled = false` / `PaletteRedoButton.IsEnabled = false`
+    /// lines must be GONE.
+    /// </summary>
     [Fact]
-    public void View_RedoButtons_AreDisabledInConstructor()
+    public void View_RedoButtons_AreNotDisabledInConstructor()
     {
         string source = ReadCodeBehind();
-        Assert.Matches(new Regex(@"RedoButton\.IsEnabled\s*=\s*false", RegexOptions.Compiled), source);
-        Assert.Matches(new Regex(@"PaletteRedoButton\.IsEnabled\s*=\s*false", RegexOptions.Compiled), source);
+        Assert.DoesNotMatch(new Regex(@"RedoButton\.IsEnabled\s*=\s*false", RegexOptions.Compiled), source);
+        Assert.DoesNotMatch(new Regex(@"PaletteRedoButton\.IsEnabled\s*=\s*false", RegexOptions.Compiled), source);
     }
 
     [Fact]
@@ -914,6 +1067,80 @@ public class ImageTSAEditorParityTests
         // make sure a future edit doesn't accidentally re-add the dead using.
         string source = ReadCodeBehind();
         Assert.DoesNotContain("using global::Avalonia.Data;", source);
+    }
+
+    // -----------------------------------------------------------------
+    // #974: palette-to-clipboard hex packing (Win 1).
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// The clipboard hex string is 16 entries * 4 big-endian hex chars = 64
+    /// chars, mirroring WF PaletteFormRef.PALETTE_TO_CLIPBOARD_BUTTON_Click
+    /// (U.big16 byte-swap of the little-endian GBA 5-5-5 word).
+    /// </summary>
+    [Fact]
+    public void ViewModel_BuildPaletteClipboardHex_PacksBigEndian5_5_5()
+    {
+        // Build a known palette: entry 0 white, entry 1 pure red, entry 2 pure
+        // green, entry 3 pure blue, the rest black.
+        var rgb = new (byte R, byte G, byte B)[16];
+        rgb[0] = (255, 255, 255); // 0x7FFF -> LE bytes FF 7F -> big16 = FF7F
+        rgb[1] = (255, 0, 0);     // 0x001F -> LE bytes 1F 00 -> big16 = 1F00
+        rgb[2] = (0, 255, 0);     // 0x03E0 -> LE bytes E0 03 -> big16 = E003
+        rgb[3] = (0, 0, 255);     // 0x7C00 -> LE bytes 00 7C -> big16 = 007C
+        // entries 4..15 stay black -> 0x0000 -> big16 = 0000
+
+        string hex = ImageTSAEditorViewModel.BuildPaletteClipboardHex(rgb);
+
+        Assert.Equal(64, hex.Length);
+        Assert.Equal("FF7F", hex.Substring(0, 4));
+        Assert.Equal("1F00", hex.Substring(4, 4));
+        Assert.Equal("E003", hex.Substring(8, 4));
+        Assert.Equal("007C", hex.Substring(12, 4));
+        // Remaining 12 entries are all black "0000".
+        Assert.Equal(string.Concat(System.Linq.Enumerable.Repeat("0000", 12)),
+            hex.Substring(16));
+    }
+
+    [Fact]
+    public void ViewModel_BuildPaletteClipboardHex_ThrowsOnWrongLength()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            ImageTSAEditorViewModel.BuildPaletteClipboardHex(null!));
+        Assert.Throws<ArgumentException>(() =>
+            ImageTSAEditorViewModel.BuildPaletteClipboardHex(new (byte, byte, byte)[15]));
+    }
+
+    // -----------------------------------------------------------------
+    // #974: raw tilesheet export render seam (Win 2).
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// The VM RenderRawTilesheet wrapper returns null (no throw) when there is
+    /// no context, and when the image pointer slot is NOT_FOUND even with a
+    /// loaded context. The raw tilesheet never reads the TSA stream, so a
+    /// NOT_FOUND tsaPointer is irrelevant; only the image slot gates it.
+    /// </summary>
+    [Fact]
+    public void ViewModel_RenderRawTilesheet_NotFoundImagePointer_ReturnsNull()
+    {
+        var vm = new ImageTSAEditorViewModel();
+        // No context yet -> null.
+        Assert.Null(vm.RenderRawTilesheet());
+
+        vm.Init(
+            width8: 32u,
+            height8: 20u,
+            zimgPointer: U.NOT_FOUND,
+            isHeaderTSA: false,
+            isLZ77TSA: true,
+            tsaPointer: U.NOT_FOUND,
+            palettePointer: U.NOT_FOUND,
+            paletteAddress: 0u,
+            paletteCount: 1);
+
+        // Image slot is NOT_FOUND -> render is skipped without throwing.
+        Assert.Null(vm.RenderRawTilesheet());
     }
 
     [Fact]
@@ -978,6 +1205,306 @@ public class ImageTSAEditorParityTests
             var vm = new ImageTSAEditorViewModel();
             vm.LoadEntry(0);
             Assert.False(vm.IsLoaded); // LoadEntry early-returns when no ROM
+        }
+        finally { CoreState.ROM = prevRom; }
+    }
+
+    // -----------------------------------------------------------------
+    // #1005: per-cell TSA editing — TSA Cell tab + Write writes the TSA.
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public void View_HasTsaCellTab()
+    {
+        string axaml = ReadAxaml();
+        Assert.Contains("AutomationId=\"ImageTSAEditor_TsaCell_Tab\"", axaml);
+        Assert.Contains("AutomationId=\"ImageTSAEditor_TsaCellX_Input\"", axaml);
+        Assert.Contains("AutomationId=\"ImageTSAEditor_TsaCellY_Input\"", axaml);
+        Assert.Contains("AutomationId=\"ImageTSAEditor_TsaCellTileId_Input\"", axaml);
+        Assert.Contains("AutomationId=\"ImageTSAEditor_TsaCellHFlip_Check\"", axaml);
+        Assert.Contains("AutomationId=\"ImageTSAEditor_TsaCellVFlip_Check\"", axaml);
+        Assert.Contains("AutomationId=\"ImageTSAEditor_TsaCellBank_Input\"", axaml);
+        Assert.Contains("AutomationId=\"ImageTSAEditor_TsaCellApply_Button\"", axaml);
+        Assert.Contains("Click=\"TsaCellApply_Click\"", axaml);
+    }
+
+    /// <summary>
+    /// The TSA Cell panel must gate IsEnabled on CanEditCells so it enables
+    /// only when a valid cell grid decoded (non-header #1005 OR a valid header
+    /// decode #1071) and stays disabled for a corrupt/unreadable TSA.
+    /// </summary>
+    [Fact]
+    public void View_TsaCellPanel_GatedOnCanEditCells()
+    {
+        string axaml = ReadAxaml();
+        // The TSA Cell tab's content StackPanel binds IsEnabled to CanEditCells.
+        Assert.Contains("IsEnabled=\"{Binding CanEditCells}\"", axaml);
+    }
+
+    /// <summary>
+    /// #1071: the "header-TSA editing tracked separately" note must be REMOVED —
+    /// header-TSA per-cell editing is now resolved, so the note no longer
+    /// applies. Its presence would be a stale-deferral marker.
+    /// </summary>
+    [Fact]
+    public void View_TsaCellPanel_NoLongerHasHeaderTsaDeferralNote()
+    {
+        string axaml = ReadAxaml();
+        Assert.DoesNotContain(
+            "Per-cell editing supports non-header TSA only", axaml);
+        Assert.DoesNotContain("header-TSA editing tracked separately", axaml);
+    }
+
+    /// <summary>
+    /// Apply-to-cell must call the VM's SetCell bit-packer then re-render the
+    /// BattlePreview from the in-memory cells.
+    /// </summary>
+    [Fact]
+    public void View_TsaCellApplyHandler_CallsSetCellThenRenders()
+    {
+        string source = ReadCodeBehind();
+        Assert.Matches(new Regex(
+            @"void\s+TsaCellApply_Click[\s\S]*?_vm\.SetCell\(",
+            RegexOptions.Compiled), source);
+        Assert.Matches(new Regex(
+            @"void\s+TsaCellApply_Click[\s\S]*?BattlePreview\.SetImage\(\s*_vm\.RenderMainImage\(\)\s*\)",
+            RegexOptions.Compiled), source);
+    }
+
+    /// <summary>
+    /// The Write button must now call _vm.WriteTsa() (gated on CanEditCells)
+    /// before PerformPaletteWrite, all inside the SAME _undoService scope, and
+    /// roll back the whole transaction on a non-empty TSA error string.
+    /// </summary>
+    [Fact]
+    public void View_WriteHandler_WritesTsaThenPaletteUnderOneScope()
+    {
+        string source = ReadCodeBehind();
+        // WriteTsa is called inside Write_Click, gated on CanEditCells.
+        Assert.Matches(new Regex(
+            @"void\s+Write_Click[\s\S]*?_vm\.CanEditCells[\s\S]*?_vm\.WriteTsa\(\)",
+            RegexOptions.Compiled), source);
+        // It still opens ONE undo scope (Begin ... Commit) and the TSA half
+        // precedes PerformPaletteWrite.
+        Assert.Matches(new Regex(
+            @"void\s+Write_Click[\s\S]*?_undoService\.Begin[\s\S]*?_vm\.WriteTsa\(\)[\s\S]*?PerformPaletteWrite\(\)[\s\S]*?_undoService\.Commit",
+            RegexOptions.Compiled), source);
+        // A non-empty TSA error rolls back before the palette half runs.
+        Assert.Matches(new Regex(
+            @"void\s+Write_Click[\s\S]*?WriteTsa\(\)[\s\S]*?string\.IsNullOrEmpty\(err\)[\s\S]*?_undoService\.Rollback",
+            RegexOptions.Compiled), source);
+    }
+
+    /// <summary>
+    /// The code-behind must wire the Cell X / Cell Y selectors to a field-load
+    /// helper with reentrancy suppression (so seeding the fields doesn't loop).
+    /// </summary>
+    [Fact]
+    public void View_WiresCellSelectorsWithSuppression()
+    {
+        string source = ReadCodeBehind();
+        Assert.Matches(new Regex(
+            @"TsaCellXBox\.ValueChanged[\s\S]*?LoadSelectedCellIntoFields",
+            RegexOptions.Compiled), source);
+        Assert.Matches(new Regex(
+            @"TsaCellYBox\.ValueChanged[\s\S]*?LoadSelectedCellIntoFields",
+            RegexOptions.Compiled), source);
+        Assert.Contains("_suppressCellLoad", source);
+    }
+
+    // -----------------------------------------------------------------
+    // #1005: ViewModel per-cell editing — GetCell/SetCell/CanEditCells/WriteTsa.
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public void ViewModel_HeaderTsa_CorruptPointer_CanEditCellsFalse()
+    {
+        ROM rom = MakeMinimalFe8uRom();
+        var prevRom = CoreState.ROM;
+        try
+        {
+            CoreState.ROM = rom;
+            var vm = new ImageTSAEditorViewModel();
+            // Header-TSA with tsaPointer=0 -> p32(0) resolves to an unreadable
+            // address, DecodeHeaderTsaCells returns null -> no editable cells
+            // (a corrupt header stays non-editable, #1071).
+            vm.Init(32u, 20u, 0u, isHeaderTSA: true, isLZ77TSA: false,
+                    tsaPointer: 0u, palettePointer: U.NOT_FOUND,
+                    paletteAddress: 0u, paletteCount: 1);
+
+            Assert.False(vm.HasCells);
+            Assert.False(vm.CanEditCells);
+        }
+        finally { CoreState.ROM = prevRom; }
+    }
+
+    // -----------------------------------------------------------------
+    // #1071: ViewModel header-TSA per-cell editing — a valid header decode
+    // ENABLES the cell panel (only x<=mhx, y<=mhy), corrupt header stays off.
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public void ViewModel_HeaderTsa_ValidHeader_EnablesCellsAndConstrainsRegion()
+    {
+        ROM rom = MakeMinimalFe8uRom();
+        var prevRom = CoreState.ROM;
+        try
+        {
+            CoreState.ROM = rom;
+
+            // Plant a 2-tile LZ77 image + a RAW header-TSA (mhx=3, mhy=2) + slots.
+            uint imgSlot = 0x100000u, tsaSlot = 0x100010u;
+            uint imgData = 0x200000u, tsaData = 0x210000u;
+            byte[] tiles = new byte[2 * 32];
+            byte[] comp = LZ77.compress(tiles);
+            Array.Copy(comp, 0, rom.Data, (int)imgData, comp.Length);
+            rom.write_p32(imgSlot, imgData);
+
+            int mhx = 3, mhy = 2;
+            byte[] tsa = BuildHeaderTsa(mhx, mhy);
+            Array.Copy(tsa, 0, rom.Data, (int)tsaData, tsa.Length);
+            rom.write_p32(tsaSlot, tsaData);
+
+            var vm = new ImageTSAEditorViewModel();
+            vm.Init(32u, 20u, imgSlot, isHeaderTSA: true, isLZ77TSA: false,
+                    tsaPointer: tsaSlot, palettePointer: U.NOT_FOUND,
+                    paletteAddress: 0u, paletteCount: 1);
+
+            // A valid header decode ENABLES the cell panel.
+            Assert.True(vm.HasCells);
+            Assert.True(vm.CanEditCells);
+            Assert.True(vm.IsHeaderCells);
+
+            // The editable region is the header region: x in [0,mhx], y in [0,mhy].
+            Assert.Equal(mhx, vm.HeaderMaxX);
+            Assert.Equal(mhy, vm.HeaderMaxY);
+            Assert.True(vm.IsCellEditable(0, 0));
+            Assert.True(vm.IsCellEditable(mhx, mhy)); // corner inside the region
+            // Cells OUTSIDE the header region are NOT editable (display-only).
+            Assert.False(vm.IsCellEditable(mhx + 1, 0));
+            Assert.False(vm.IsCellEditable(0, mhy + 1));
+            Assert.False(vm.IsCellEditable(31, 19)); // far canvas corner
+        }
+        finally { CoreState.ROM = prevRom; }
+    }
+
+    [Fact]
+    public void ViewModel_HeaderTsa_SetCell_OutsideHeaderRegion_NoOp()
+    {
+        ROM rom = MakeMinimalFe8uRom();
+        var prevRom = CoreState.ROM;
+        try
+        {
+            CoreState.ROM = rom;
+
+            uint imgSlot = 0x100000u, tsaSlot = 0x100010u;
+            uint imgData = 0x200000u, tsaData = 0x210000u;
+            byte[] tiles = new byte[2 * 32];
+            byte[] comp = LZ77.compress(tiles);
+            Array.Copy(comp, 0, rom.Data, (int)imgData, comp.Length);
+            rom.write_p32(imgSlot, imgData);
+
+            int mhx = 3, mhy = 2;
+            byte[] tsa = BuildHeaderTsa(mhx, mhy);
+            Array.Copy(tsa, 0, rom.Data, (int)tsaData, tsa.Length);
+            rom.write_p32(tsaSlot, tsaData);
+
+            var vm = new ImageTSAEditorViewModel();
+            vm.Init(32u, 20u, imgSlot, isHeaderTSA: true, isLZ77TSA: false,
+                    tsaPointer: tsaSlot, palettePointer: U.NOT_FOUND,
+                    paletteAddress: 0u, paletteCount: 1);
+
+            // An in-region edit lands.
+            ushort before = vm.GetCell(1, 1);
+            vm.SetCell(1, 1, tileId: 1, hflip: true, vflip: false, bank: 5);
+            Assert.NotEqual(before, vm.GetCell(1, 1));
+
+            // An out-of-header edit is a no-op: GetCell at an out-of-region cell
+            // stays 0 and SetCell cannot change it.
+            vm.SetCell(mhx + 5, 0, tileId: 1, hflip: true, vflip: true, bank: 7);
+            Assert.Equal(0, vm.GetCell(mhx + 5, 0));
+        }
+        finally { CoreState.ROM = prevRom; }
+    }
+
+    // Build an ASYMMETRIC header-TSA stream for the VM tests.
+    static byte[] BuildHeaderTsa(int mhx, int mhy)
+    {
+        int cells = (mhx + 1) * (mhy + 1);
+        byte[] tsa = new byte[2 + cells * 2];
+        tsa[0] = (byte)mhx;
+        tsa[1] = (byte)mhy;
+        for (int k = 0; k < cells; k++)
+        {
+            ushort v = (ushort)(0x100 + k * 7 + 1);
+            tsa[2 + k * 2] = (byte)(v & 0xFF);
+            tsa[2 + k * 2 + 1] = (byte)(v >> 8);
+        }
+        return tsa;
+    }
+
+    [Fact]
+    public void ViewModel_NonHeaderRaw_DecodesEditableCells()
+    {
+        ROM rom = MakeMinimalFe8uRom();
+        var prevRom = CoreState.ROM;
+        try
+        {
+            CoreState.ROM = rom;
+
+            // Plant a 2x1 LZ77 tile image + raw 2-cell TSA + the pointer slots.
+            uint imgSlot = 0x100000u, tsaSlot = 0x100010u;
+            uint imgData = 0x200000u, tsaData = 0x210000u;
+            byte[] tiles = new byte[2 * 32];          // 2 tiles
+            byte[] comp = LZ77.compress(tiles);
+            Array.Copy(comp, 0, rom.Data, (int)imgData, comp.Length);
+            rom.write_p32(imgSlot, imgData);
+            ushort c0 = ImageTSAEditorCore.SerializeCell(1, true, false, 3);
+            ushort c1 = ImageTSAEditorCore.SerializeCell(0, false, true, 1);
+            U.write_u16(rom.Data, tsaData + 0, c0);
+            U.write_u16(rom.Data, tsaData + 2, c1);
+            rom.write_p32(tsaSlot, tsaData);
+
+            var vm = new ImageTSAEditorViewModel();
+            vm.Init(2u, 1u, imgSlot, isHeaderTSA: false, isLZ77TSA: false,
+                    tsaPointer: tsaSlot, palettePointer: U.NOT_FOUND,
+                    paletteAddress: 0u, paletteCount: 1);
+
+            Assert.True(vm.HasCells);
+            Assert.True(vm.CanEditCells);
+            Assert.Equal(2, vm.CellCols);
+            Assert.Equal(1, vm.CellRows);
+            Assert.Equal(c0, vm.GetCell(0, 0));
+            Assert.Equal(c1, vm.GetCell(1, 0));
+            // MaxTileId clamps to tilesheetTileCount-1 = 1.
+            Assert.Equal(1, vm.MaxTileId);
+
+            // SetCell bit-packs and clamps the tile id to MaxTileId.
+            vm.SetCell(0, 0, tileId: 999, hflip: false, vflip: true, bank: 2);
+            ushort edited = vm.GetCell(0, 0);
+            Assert.Equal(1, edited & 0x3FF);            // clamped to MaxTileId
+            Assert.Equal(0, edited & 0x400);            // hflip cleared
+            Assert.NotEqual(0, edited & 0x800);         // vflip set
+            Assert.Equal(2, (edited >> 12) & 0xF);      // bank 2
+        }
+        finally { CoreState.ROM = prevRom; }
+    }
+
+    [Fact]
+    public void ViewModel_WriteTsa_CorruptHeaderTsa_ReturnsErrorNotEmpty()
+    {
+        ROM rom = MakeMinimalFe8uRom();
+        var prevRom = CoreState.ROM;
+        try
+        {
+            CoreState.ROM = rom;
+            var vm = new ImageTSAEditorViewModel();
+            // Header-TSA with tsaPointer=0 -> corrupt -> no editable cells ->
+            // WriteTsa refuses with a non-empty error (CanEditCells false).
+            vm.Init(32u, 20u, 0u, isHeaderTSA: true, isLZ77TSA: false,
+                    tsaPointer: 0u, palettePointer: U.NOT_FOUND,
+                    paletteAddress: 0u, paletteCount: 1);
+            Assert.False(string.IsNullOrEmpty(vm.WriteTsa()));
         }
         finally { CoreState.ROM = prevRom; }
     }

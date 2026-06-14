@@ -8,6 +8,20 @@ namespace FEBuilderGBA.Avalonia.ViewModels
     {
         const uint SIZE = 12;
 
+        // ----------------------------------------------------------------
+        // Preview state (issue #857, NV6-PR2).
+        // ----------------------------------------------------------------
+        bool _canExportChange;
+        /// <summary>
+        /// True when a change-map preview image has been successfully rendered.
+        /// Gates the read-only "Export PNG" button in the View.
+        /// </summary>
+        public bool CanExportChange { get => _canExportChange; set => SetField(ref _canExportChange, value); }
+
+        // Currently selected map ID — stored so RenderChangePreview can resolve
+        // the map_setting fields (obj_plist, palette_plist, config_plist).
+        uint _currentMapId = uint.MaxValue;
+
         // The detail-panel field layout. WF Designer.cs declares P8 as a
         // pointer (NumericUpDown Hexadecimal=true + InputFormRef pointer
         // semantics) — using "P8" here routes the read/write through
@@ -91,6 +105,7 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             if (!U.isSafetyOffset(addr, rom)) { ClearEntry(); return false; }
             if (addr + SIZE > (uint)rom.Data.Length) { ClearEntry(); return false; }
 
+            _currentMapId = mapId;
             LoadEventMapChange(addr);
             return true;
         }
@@ -128,6 +143,9 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             ReadStartAddress = 0;
             ReadCount = 0;
             BlockSize = SIZE;
+            // Clear preview state (#857, NV6-PR2).
+            _currentMapId = uint.MaxValue;
+            CanExportChange = false;
         }
 
         // ----------------------------------------------------------------
@@ -233,6 +251,151 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         }
 
         /// <summary>
+        /// Count map-change records starting at <paramref name="startAddr"/>
+        /// until the 0xFF terminator byte, with an explicit termination flag.
+        /// Returns true when a real 0xFF terminator was found within the 256-row
+        /// cap; false when the scan hit the cap without finding one (unterminated
+        /// list guard — CORRECTION G2a-4).
+        /// </summary>
+        static int CountChangeRecordsTerminated(ROM rom, uint startAddr, out bool terminated)
+        {
+            terminated = false;
+            if (rom == null) return 0;
+            uint romLen = (uint)rom.Data.Length;
+            int count = 0;
+            for (uint i = 0; i < 256; i++)
+            {
+                uint a = startAddr + i * SIZE;
+                if (a + SIZE > romLen) break;
+                if (rom.u8(a) == 0xFF)
+                {
+                    terminated = true;
+                    break;
+                }
+                count++;
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// Expand the event map-change list for the currently selected map to
+        /// <paramref name="newCount"/> rows, using
+        /// <see cref="DataExpansionCore.ExpandTableTo"/> for the single-slot
+        /// move + copy + wipe + canonical-pointer repoint, then
+        /// <see cref="DataExpansionCore.RepointAllReferences"/> for all other
+        /// raw-pointer / ARM LDR references (NV1a all-reference pattern —
+        /// mirrors <c>WorldMapImageViewModel.ExpandTableHelper</c>).
+        ///
+        /// <para><b>Refusal conditions (CORRECTION G2a-4):</b> no map selected;
+        /// change address not found; empty list (first byte == 0xFF); count == 0;
+        /// or the list scan hit the 256-row cap without a real 0xFF terminator
+        /// (unterminated-list guard).</para>
+        ///
+        /// <para><b>NOTE A:</b> <see cref="DataExpansionCore.RepointAllReferences"/>
+        /// returning 0 is SUCCESS — <c>ExpandTableTo</c> already repointed the
+        /// canonical PLIST slot. Do NOT roll back on 0.</para>
+        ///
+        /// <para><b>NOTE B:</b> sets <see cref="ReadStartAddress"/> and
+        /// <see cref="ReadCount"/> from the <see cref="DataExpansionCore.ExpandResult"/>
+        /// directly (not by re-scanning), because zero-filled rows satisfy the
+        /// <c>firstByte != 0xFF</c> predicate and a rescan would continue to the
+        /// new terminator, correctly giving newCount — but using result.NewCount
+        /// is cleaner and avoids the ambiguity.</para>
+        ///
+        /// <para>The caller MUST open ONE ambient undo scope via
+        /// <c>UndoService.Begin</c> before invoking this method and pass the
+        /// active <see cref="Undo.UndoData"/> so both <c>ExpandTableTo</c> (ambient)
+        /// and <c>RepointAllReferences</c> (explicit) record into the same
+        /// transaction.</para>
+        /// </summary>
+        /// <param name="newCount">Target row count (must be &gt;= current count).</param>
+        /// <param name="undo">The active undo buffer from
+        /// <c>UndoService.GetActiveUndoData()</c>.</param>
+        /// <returns>Empty string on success; human-readable error otherwise.</returns>
+        public string ExpandEventMapChangeList(uint newCount, Undo.UndoData? undo)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom?.RomInfo == null) return R._("ROM not loaded.");
+
+            // CORRECTION G2a-4: no map selected.
+            if (_currentMapId == uint.MaxValue) return R._("No map selected.");
+
+            // CORRECTION G2a-1: capture BOTH changeAddr AND pointerSlot from
+            // GetMapChangeAddrWhereMapID (previously discarded as out _).
+            uint changeAddr = MapChangeCore.GetMapChangeAddrWhereMapID(rom, _currentMapId, out uint pointerSlot);
+            if (changeAddr == U.NOT_FOUND || !U.isSafetyOffset(changeAddr, rom))
+                return R._("No change-data for the selected map (plist 0/0xFF or resolution failed).");
+
+            // CORRECTION G2a-4: empty list guard (first byte == 0xFF).
+            if (rom.u8(changeAddr) == 0xFF)
+                return R._("Cannot expand: change list is empty (first byte is 0xFF).");
+
+            // CORRECTION G2a-4: also guard the resolved pointerSlot.
+            if (pointerSlot == U.NOT_FOUND)
+                return R._("Cannot expand: the CHANGE PLIST slot could not be resolved.");
+
+            // CORRECTION G2a-4: unterminated-list guard — if the scan reaches
+            // the 256-row cap without finding a 0xFF terminator, the list is
+            // corrupt or unbounded. Refuse rather than expanding from bogus 256.
+            int currentCount = CountChangeRecordsTerminated(rom, changeAddr, out bool terminated);
+            if (!terminated)
+                return R._("Cannot expand: the change list appears unterminated (no 0xFF within 256 rows). " +
+                            "Expanding an unterminated list may corrupt the ROM.");
+
+            if (currentCount == 0)
+                return R._("Cannot expand: change list has 0 records.");
+
+            if (newCount < (uint)currentCount)
+                return R._("New count ({0}) must be >= current count ({1}).", newCount, currentCount);
+
+            if (newCount == (uint)currentCount) return ""; // no-op success
+
+            // CORRECTION G2a-1: capture the old base BEFORE the move.
+            uint oldBase = changeAddr;
+
+            // CORRECTION G2a-2 (ALL-REFERENCE — mandatory, mirrors WorldMapImageViewModel):
+            // Step 1: ExpandTableTo uses the PLIST slot (pointerSlot) as the pointer address
+            // so it repoints the canonical PLIST entry to the new base.
+            var result = DataExpansionCore.ExpandTableTo(rom, pointerSlot, SIZE, (uint)currentCount, newCount);
+            if (!result.Success)
+                return result.Error ?? R._("Table expansion failed.");
+
+            uint newBase = result.NewBaseAddress;
+
+            // Step 2: Repoint EVERY other raw-pointer / LDR reference to the old base.
+            // NOTE A: RepointAllReferences returning 0 is SUCCESS (canonical already
+            // repointed by ExpandTableTo). Do NOT roll back on 0.
+            DataExpansionCore.RepointAllReferences(rom, oldBase, newBase, undo);
+
+            // NOTE B: set the editor's read-state from the ExpandResult directly,
+            // not by re-scanning.
+            ReadStartAddress = newBase;
+            ReadCount = (int)result.NewCount;
+
+            return "";
+        }
+
+        /// <summary>
+        /// Build the change AddressList for exactly <paramref name="count"/>
+        /// rows starting at <paramref name="baseAddr"/> (an offset). Used after
+        /// an expand to render the grown list WITHOUT re-scanning past the
+        /// zero-filled new rows (NOTE B). Mirrors WorldMapImageViewModel.BuildBorderListForCount.
+        /// </summary>
+        public List<AddrResult> BuildChangeListForCount(uint baseAddr, int count)
+        {
+            var result = new List<AddrResult>();
+            ROM rom = CoreState.ROM;
+            if (rom?.Data == null || count <= 0) return result;
+            uint addr = baseAddr;
+            for (int i = 0; i < count && i < 256; i++, addr += SIZE)
+            {
+                if (addr + SIZE > (uint)rom.Data.Length) break;
+                result.Add(new AddrResult(addr, U.ToHexString(i), (uint)i));
+            }
+            return result;
+        }
+
+        /// <summary>
         /// Write the current B0-B7 + P8 fields back to ROM at
         /// <see cref="CurrentAddr"/>. The caller MUST have opened an
         /// ambient <see cref="UndoService"/> scope (the View's
@@ -253,6 +416,96 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         }
 
         // ----------------------------------------------------------------
+        // Pointer-import (#961 W2c) — mirrors the intent of WF
+        // EventMapChangeForm `button1` ("変化データ ポインタ先へのインポート" =
+        // "Import to the change-data pointer destination").
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Import the change tile-data referenced by <paramref name="sourceAddr"/>
+        /// (an existing change-data block — e.g. another map's P8 destination)
+        /// into the currently selected change record, repointing this record's
+        /// P8 (offset +8) at a fresh free-space copy of those bytes.
+        ///
+        /// <para>The number of bytes read from the source is determined by the
+        /// CURRENT record's width (B3) × height (B4) × 2 (the RAW u16 tile-index
+        /// array layout used by <see cref="MapRenderCore.RenderChangeMap"/> and WF
+        /// <c>DrawChangeMap</c>). This is the standard FEBuilder "append + repoint"
+        /// pattern: the source bytes are copied to ROM free space via
+        /// <see cref="RecycleAddress.WriteAndWritePointerAmbient"/> and the slot's
+        /// P8 pointer is repointed at the copy. Nothing is overwritten in place, so
+        /// a size mismatch can never corrupt neighbouring data.</para>
+        ///
+        /// <para><b>Undo:</b> the caller MUST open an ambient
+        /// <see cref="UndoService"/> scope (the View's <c>PointerImport_Click</c>
+        /// does this via <c>_undoService.Begin</c>) before calling. Every write
+        /// here routes through the ambient (<c>...Ambient</c>) RecycleAddress
+        /// overload so the active <see cref="ROM.BeginUndoScope"/> records each
+        /// write exactly once; on any returned error the caller rolls back.</para>
+        ///
+        /// <para><b>Refusal conditions (no mutation):</b> no ROM; no entry loaded
+        /// (CurrentAddr == 0); zero width/height (B3/B4 — nothing to copy);
+        /// unsafe / out-of-bounds source address or source length; free-space
+        /// exhaustion (the RecycleAddress write fails).</para>
+        /// </summary>
+        /// <param name="sourceAddr">Source change-data address. Accepts either a
+        /// raw ROM offset (&lt; 0x08000000) or a GBA pointer (≥ 0x08000000); it is
+        /// normalised via <see cref="U.toOffset(uint)"/>.</param>
+        /// <returns>Empty string on success; a human-readable error otherwise.</returns>
+        public string ImportChangeDataFromPointer(uint sourceAddr)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null) return R._("ROM not loaded.");
+            if (!IsLoaded || CurrentAddr == 0)
+                return R._("No map-change entry is selected. Select a map with change-data first.");
+
+            // The copy length is the CURRENT record's tile array: B3 (W) × B4 (H)
+            // × 2 bytes per u16 tile index — the same RAW layout the renderer reads.
+            uint width  = B3;
+            uint height = B4;
+            if (width == 0 || height == 0)
+                return R._("Cannot import: the selected record has zero width or height. Set the W/H fields first.");
+
+            long lengthL = (long)width * height * 2;
+            if (lengthL <= 0 || lengthL > 256L * 256L * 2L)
+                return R._("Cannot import: the change region size ({0}×{1}) is out of range.", width, height);
+            int length = (int)lengthL;
+
+            // Normalise + bounds-check the source.
+            uint srcOffset = U.toOffset(sourceAddr);
+            if (!U.isSafetyOffset(srcOffset, rom))
+                return R._("Cannot import: the source address (0x{0:X08}) is not a valid ROM address.", srcOffset);
+            if ((long)srcOffset + length > rom.Data.Length)
+                return R._("Cannot import: the source data (0x{0:X08} + {1} bytes) runs past the end of the ROM.", srcOffset, length);
+
+            // Read the RAW change-data bytes from the source.
+            byte[] copy = rom.getBinaryData(srcOffset, (uint)length);
+            if (copy == null || copy.Length != length)
+                return R._("Cannot import: failed to read {0} bytes from the source address.", length);
+
+            // Append a fresh copy to free space and repoint THIS record's P8
+            // (the ROM pointer slot lives at CurrentAddr + 8). Ambient overload →
+            // the active UndoService scope records each write once.
+            // WriteAndWritePointerAmbient RETURNS the allocated data OFFSET
+            // (use_addr) and itself writes the GBA pointer into the slot via
+            // write_p32 — so newAddr is already a ROM offset (< 0x08000000).
+            uint pointerSlot = CurrentAddr + 8;
+            var ra = new RecycleAddress();
+            uint newAddr = ra.WriteAndWritePointerAmbient(pointerSlot, copy);
+            if (newAddr == U.NOT_FOUND)
+                return R._("Cannot import: ran out of ROM free space while writing the change data.");
+
+            // Keep the in-memory P8 as an OFFSET — matching the load path
+            // (EditorFormRef.ReadFields → rom.p32 → U.toOffset, always
+            // < 0x08000000) and every consumer (RenderChangePreview's
+            // U.toOffset(P8), GetDataReport's raw 0x{P8:X08}). The ROM pointer
+            // slot at CurrentAddr+8 was ALREADY written (as a GBA pointer) by
+            // WriteAndWritePointerAmbient — do NOT re-pointer-ify here.
+            P8 = newAddr;
+            return "";
+        }
+
+        // ----------------------------------------------------------------
         // Comment cache (mirrors ImageBGViewModel — keyed on CurrentAddr).
         // ----------------------------------------------------------------
 
@@ -270,6 +523,118 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             if (cache == null) return;
             if (CurrentAddr == 0) return;
             cache.Update(CurrentAddr, Comment);
+        }
+
+        // ----------------------------------------------------------------
+        // Change-map overlay preview (#857, NV6-PR2).
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Render the change-map overlay preview for the currently loaded
+        /// change record and currently selected map. Returns the rendered
+        /// <see cref="IImage"/> (may be <c>null</c> on any failure), and
+        /// updates <see cref="CanExportChange"/> accordingly.
+        ///
+        /// <para>Null-safe: returns <c>null</c> and clears
+        /// <see cref="CanExportChange"/> when no ROM, no entry, no valid
+        /// map_setting, or the Core render fails.</para>
+        /// </summary>
+        public IImage RenderChangePreview()
+        {
+            try
+            {
+                ROM rom = CoreState.ROM;
+                if (rom == null || rom.RomInfo == null || !IsLoaded || CurrentAddr == 0
+                    || _currentMapId == uint.MaxValue)
+                {
+                    CanExportChange = false;
+                    return null;
+                }
+
+                // Resolve map_setting address for the selected map.
+                uint mapSettingAddr = MapSettingCore.GetMapAddr(rom, _currentMapId);
+                if (!U.isSafetyOffset(mapSettingAddr, rom))
+                {
+                    CanExportChange = false;
+                    return null;
+                }
+                // Verify the map setting has the required fields at the expected offsets.
+                // map_setting layout (verified in plan review):
+                //   +4 (u16): obj_plist   — OBJ tileset PLIST index (take low byte: &0xFF)
+                //   +6 (u8):  palette_plist
+                //   +7 (u8):  config_plist
+                if (mapSettingAddr + 8u > (uint)rom.Data.Length)
+                {
+                    CanExportChange = false;
+                    return null;
+                }
+                uint objPlistRaw    = rom.u16(mapSettingAddr + 4);
+                uint palettePlist   = rom.u8(mapSettingAddr + 6);
+                uint configPlist    = rom.u8(mapSettingAddr + 7);
+
+                // obj_plist is a packed u16: the LOW byte is the primary OBJ
+                // tileset PLIST, the HIGH byte is the FE7 secondary obj2 tileset
+                // PLIST (MR4, #961 W2c). FE6/FE8 always have the high byte 0, so
+                // obj2Plist resolves to 0 there and the second tileset is skipped.
+                uint objPlist  = objPlistRaw & 0xFFu;
+                uint obj2Plist = (objPlistRaw >> 8) & 0xFFu;
+
+                // Resolve each plist to a ROM data offset.
+                uint objOffset     = MapChangeCore.PlistToOffsetAddr(rom, MapChangeCore.PlistType.OBJECT,  objPlist,     out _);
+                uint paletteOffset = MapChangeCore.PlistToOffsetAddr(rom, MapChangeCore.PlistType.PALETTE, palettePlist, out _);
+                uint configOffset  = MapChangeCore.PlistToOffsetAddr(rom, MapChangeCore.PlistType.CONFIG,  configPlist,  out _);
+
+                if (objOffset == U.NOT_FOUND || paletteOffset == U.NOT_FOUND || configOffset == U.NOT_FOUND)
+                {
+                    CanExportChange = false;
+                    return null;
+                }
+
+                // Resolve the FE7 obj2 (secondary tileset) offset from the high
+                // byte. WF DrawMapChipOnly (~L40-47) only resolves obj2 when the
+                // high byte is > 0, and bails (BlankDummy) if the resolution is
+                // unsafe. Mirror that: 0 → no second tileset; a non-zero but
+                // unresolvable obj2 → fail the whole render.
+                uint obj2Offset = 0;
+                if (obj2Plist > 0)
+                {
+                    obj2Offset = MapChangeCore.PlistToOffsetAddr(rom, MapChangeCore.PlistType.OBJECT, obj2Plist, out _);
+                    if (obj2Offset == U.NOT_FOUND)
+                    {
+                        CanExportChange = false;
+                        return null;
+                    }
+                }
+
+                // P8 is read via EditorFormRef.ReadFields → rom.p32, which already calls
+                // U.toOffset internally and returns a ROM offset.  The U.toOffset call here
+                // is an idempotent safety-normalize: it is a no-op on a valid ROM offset
+                // (< 0x08000000), but correctly converts a raw GBA pointer (≥ 0x08000000)
+                // in case the field was hand-edited to a raw pointer value before saving.
+                uint changeDataOffset = U.toOffset(P8);
+                if (!U.isSafetyOffset(changeDataOffset, rom))
+                {
+                    CanExportChange = false;
+                    return null;
+                }
+
+                // Width (B3) and height (B4) from the loaded change record.
+                int width  = (int)B3;
+                int height = (int)B4;
+
+                IImage img = MapRenderCore.RenderChangeMap(
+                    rom, objOffset, paletteOffset, configOffset,
+                    changeDataOffset, width, height, obj2Offset);
+
+                CanExportChange = img != null;
+                return img;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"EventMapChangeViewModel.RenderChangePreview failed: {ex}");
+                CanExportChange = false;
+                return null;
+            }
         }
 
         public int GetListCount() => IsLoaded && CurrentAddr != 0 ? 1 : 0;

@@ -29,10 +29,12 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         bool _isLoaded;
         bool _isLoading;
 
-        // Display-only disassembly backing state (#757). Populated by
-        // DisassembleScript() and kept around for possible future row
-        // selection. NO edit/write state lives here — opcode write-back is
-        // still deferred (see Write()/Write_Click).
+        // Display-only disassembly backing state. Populated by
+        // DisassembleScript() (#757) and edited in place by the per-row /
+        // structural helpers; opcode write-back IS implemented in
+        // WriteScript() (#760), which serializes these rows back to the ROM.
+        // These two lists are the display-only backing model for the
+        // Disassembly list — the canonical edit state, not a deferred stub.
         readonly List<EventScript.OneCode> _disassembled = new();
         readonly List<uint> _rowOffsets = new();
 
@@ -437,6 +439,217 @@ namespace FEBuilderGBA.Avalonia.ViewModels
                 lines.Add(FormatAiRow(code, off));
             }
             return lines;
+        }
+
+        // ----------------------------------------------------------------
+        // File export / import (#965). Mirrors WF AIScriptForm.EventToTextAll
+        // / EventToFile (export) and FileToEvent / TextToEvent / LineToEventByte
+        // (import). AI is a FIXED 16-byte-per-opcode stream with no conditional
+        // jumps/labels, so this is a straight byte-stream round-trip — no
+        // deferred-jump resolution. The View owns the file dialog + disk I/O;
+        // all decode/encode logic lives here (Core-pure).
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Serialize every decoded instruction in the editable model into the
+        /// WF-COMPATIBLE per-opcode text format — one line per opcode:
+        /// <c>&lt;hexbytes&gt;\t//&lt;ScriptName&gt;[argName:value]&lt;literal Info text&gt;…</c>
+        /// followed by the row's comment when present, then '\n'. The leading
+        /// hex prefix is byte-identical to WF
+        /// (<c>EventScriptInnerControl.EventToTextOne</c>), which is the ONLY
+        /// part <see cref="ImportFromText"/> consumes — so Export → Import →
+        /// Export round-trips losslessly. The WinForms-coupled rich per-ArgType
+        /// previews (UnitForm.GetUnitName, InputFormRef.GetAI1, decoded TEXT,
+        /// …) are decorative comment-only text and are intentionally OMITTED
+        /// (they are unavailable in the cross-platform VM and do not affect the
+        /// import round-trip).
+        ///
+        /// Lazily disassembles from <see cref="CurrentAddr"/> when the model is
+        /// empty but a script is loaded (Copilot plan-review #2 — Export must
+        /// never emit an empty script after a load-without-refresh). Returns an
+        /// empty string when nothing is loaded / disassembled.
+        /// </summary>
+        public string ExportToText()
+        {
+            // Repopulate the editable model if a script is loaded but the model
+            // is empty (e.g. Export pressed right after LoadEntry, before any
+            // ReloadList re-read). DisassembleScript is a no-op when not loaded.
+            if (_disassembled.Count == 0 && IsLoaded && CurrentAddr != 0)
+                DisassembleScript();
+
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < _disassembled.Count; i++)
+                sb.Append(FormatExportLine(_disassembled[i]));
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Render ONE decoded opcode as the WF-compatible export line. Mirrors
+        /// the structure of <c>EventScriptInnerControl.EventToTextOne</c>:
+        /// continuous 2-digit upper-hex of ByteData, then <c>\t//</c>, the
+        /// script name (<c>Info[0]</c>), and for each odd <c>Info[i]</c> token
+        /// that carries a symbol (<c>[X</c>) the matching non-FIXED arg as
+        /// <c>[argName:value]</c> with the <c>Info[i+1]</c> literal appended.
+        /// A trailing per-row comment (when present) is emitted after a second
+        /// <c>//</c> so it survives the round-trip as a leading-hex-free line
+        /// that import skips. Null/length-guarded for unknown opcodes whose
+        /// Script/Info/Args may be minimal (Copilot plan-review #4).
+        /// </summary>
+        static string FormatExportLine(EventScript.OneCode code)
+        {
+            var sb = new System.Text.StringBuilder();
+
+            byte[] bytes = code?.ByteData ?? System.Array.Empty<byte>();
+            for (int n = 0; n < bytes.Length; n++)
+                sb.Append(bytes[n].ToString("X2"));
+
+            sb.Append("\t//");
+
+            EventScript.Script sc = code?.Script;
+            string[] info = sc?.Info;
+            if (info != null && info.Length > 0)
+            {
+                sb.Append(info[0]);
+
+                EventScript.Arg[] args = sc.Args ?? System.Array.Empty<EventScript.Arg>();
+                for (int i = 1; i < info.Length; i += 2)
+                {
+                    char symbol = ' ';
+                    if (info[i] != null && info[i].Length > 2)
+                        symbol = info[i][1]; // "[X" → X is the symbol name
+
+                    for (int n = 0; n < args.Length; n++)
+                    {
+                        EventScript.Arg arg = args[n];
+                        if (EventScript.IsFixedArg(arg))
+                            continue; // FIXED args are not editable / not surfaced
+                        if (symbol != arg.Symbol)
+                            continue;
+
+                        sb.Append('[');
+                        string hexstring = EventScript.GetArg(code, n, out _);
+                        sb.Append(arg.Name);
+                        sb.Append(':');
+                        sb.Append(hexstring);
+                        sb.Append(']');
+                        break;
+                    }
+
+                    if (i + 1 < info.Length && info[i + 1] != null)
+                        sb.Append(info[i + 1]);
+                }
+            }
+
+            if (!string.IsNullOrEmpty(code?.Comment))
+            {
+                sb.Append("  //");
+                sb.Append(code.Comment);
+            }
+
+            sb.Append('\n');
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Rebuild the editable opcode model from exported text (mirrors WF
+        /// AIScriptForm.TextToEvent(..., isClear:true) + LineToEventByte).
+        /// Each line is parsed for its LEADING hex pairs only via
+        /// <see cref="ReadLeadingHexBytes"/> (WF LineToEventByte parity): the
+        /// scan reads 2-hex-digit pairs and STOPS at the first non-hex char, so
+        /// the <c>\t//…</c> comment and any blank / comment-only line are
+        /// tolerated, and a lone trailing nibble is dropped (NOT padded). A line
+        /// yielding fewer than 4 bytes is skipped (WF's <c>bin.Length &lt; 4</c>
+        /// "broken or non-code" guard). Each surviving 4..16-byte instruction is
+        /// right-padded with zero bytes to the FIXED 16-byte AI width by
+        /// <see cref="PadToInstruction"/> (a parse longer than 16 bytes is
+        /// rejected and that line skipped), then decoded via
+        /// AIScript.DisAseemble. On any successful parse the model is REPLACED
+        /// (clear-then-fill), JisageReorder is run, and row offsets are rebuilt.
+        ///
+        /// Does NOT write to the ROM — the caller refreshes the view and the
+        /// user clicks Write to persist (preserving the established undo flow).
+        /// Returns the number of opcodes imported (0 = nothing valid found, the
+        /// model is left UNCHANGED).
+        /// </summary>
+        public int ImportFromText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+
+            EventScript es = CoreState.AIScript;
+            if (es == null) return 0;
+
+            var parsed = new List<EventScript.OneCode>();
+            string[] lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+            foreach (string line in lines)
+            {
+                byte[] raw = ReadLeadingHexBytes(line);
+                if (raw.Length < 4)
+                    continue; // blank / comment-only / broken line (WF parity)
+
+                byte[]? bytes = PadToInstruction(raw);
+                if (bytes == null)
+                    continue; // over-length (> 16 bytes) — not a single AI opcode
+
+                EventScript.OneCode code;
+                try
+                {
+                    code = es.DisAseemble(bytes, 0);
+                }
+                catch
+                {
+                    continue;
+                }
+                if (code == null || code.ByteData == null)
+                    continue;
+
+                parsed.Add(code);
+            }
+
+            if (parsed.Count == 0) return 0;
+
+            _disassembled.Clear();
+            _disassembled.AddRange(parsed);
+            EventScriptUtil.JisageReorder(_disassembled);
+            RebuildRowOffsets();
+            return _disassembled.Count;
+        }
+
+        /// <summary>
+        /// Read the LEADING hex byte pairs from a line, stopping at the first
+        /// non-hex character (mirrors WF AIScriptForm.LineToEventByte). A lone
+        /// trailing nibble is dropped. Whitespace is NOT skipped — like WF, the
+        /// scan stops at the first space/tab (the exported hex dump has no
+        /// internal separators), so a "<hex>\t//comment" line yields exactly the
+        /// opcode bytes.
+        /// </summary>
+        static byte[] ReadLeadingHexBytes(string line)
+        {
+            if (string.IsNullOrEmpty(line)) return System.Array.Empty<byte>();
+            var ret = new List<byte>();
+            int length = line.Length;
+            for (int i = 0; i + 1 < length; i += 2)
+            {
+                if (!U.ishex(line[i]) || !U.ishex(line[i + 1]))
+                    break;
+                ret.Add((byte)U.atoh(line.Substring(i, 2)));
+            }
+            return ret.ToArray();
+        }
+
+        /// <summary>
+        /// Validate + right-pad a parsed instruction to the FIXED 16-byte AI
+        /// width. A 16-byte instruction passes through; a 4..15-byte
+        /// instruction is right-padded with zero bytes; an instruction longer
+        /// than 16 bytes is rejected (null). Callers have already enforced the
+        /// 4-byte floor.
+        /// </summary>
+        static byte[]? PadToInstruction(byte[] raw)
+        {
+            if (raw.Length > 16) return null;
+            if (raw.Length == 16) return raw;
+            byte[] padded = new byte[16];
+            System.Array.Copy(raw, padded, raw.Length);
+            return padded;
         }
 
         // ----------------------------------------------------------------
@@ -859,6 +1072,57 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         /// The View uses this to pick a post-edit selection after New/Remove
         /// without re-materializing the display lines.</summary>
         public int RowCount => _disassembled.Count;
+
+        // ----------------------------------------------------------------
+        // List expansion (#1020). Mirrors WF
+        // AIScriptForm.AddressListExpandsEventNoCopyPointer.
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Expand the active AI pointer table (ai1 when FilterIndex==0, ai2 when 1)
+        /// to <paramref name="newCount"/> 4-byte pointer slots. Mirrors WF
+        /// <c>AIScriptForm.AddressListExpandsEventNoCopyPointer</c>:
+        /// <see cref="DataExpansionCore.ExpandTableTo"/> copies the old slots,
+        /// zero-fills the new ones, writes the 0xFFFFFFFF terminator, wipes the old
+        /// region and repoints the canonical slot ai*[0]; this then repoints the two
+        /// additional consecutive base-pointer slots ai*[1]/ai*[2] that WF also
+        /// repoints (isPointer-guarded, so ROMs without them are unaffected). The
+        /// caller wraps this in an UndoService scope; ExpandTableTo + the write_p32
+        /// calls are recorded by that ambient scope. <paramref name="undo"/> is
+        /// reserved (kept for signature parity / future RepointAllReferences hardening).
+        /// </summary>
+        /// <returns>Empty string on success, an error message otherwise.</returns>
+        public string ExpandList(uint newCount, Undo.UndoData? undo)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom == null) return R._("ROM not loaded.");
+            uint tablePointer = (FilterIndex == 1) ? rom.RomInfo.ai2_pointer : rom.RomInfo.ai1_pointer;
+            if (!U.isSafetyOffset(tablePointer)) return R._("AI pointer table not found.");
+            if (newCount < ReadCount)
+                return R._("New count ({0}) must be greater than or equal to current count ({1}).", newCount, ReadCount);
+            if (newCount == ReadCount) return ""; // no-op success
+
+            var result = DataExpansionCore.ExpandTableTo(rom, tablePointer, 4, ReadCount, newCount);
+            if (!result.Success) return result.Error ?? R._("Table expansion failed.");
+
+            // WF: the AI table base lives in 3 consecutive pointer slots (ai*[3]).
+            // ExpandTableTo repointed slot [0]; repoint [1] and [2] too, guarded by
+            // isPointer (WF: `if (!U.isPointer(p)) continue;`) and an EOF bound.
+            for (uint i = 1; i < 3; i++)
+            {
+                uint slot = tablePointer + i * 4;
+                if (slot + 4 > (uint)rom.Data.Length) break;
+                if (U.isPointer(rom.u32(slot)))
+                    rom.write_p32(slot, result.NewBaseAddress);
+            }
+
+            // Refresh the read-config from the new pointer base (NOT a ROM write).
+            // The VM exposes the table base as TopAddress (there is no
+            // ReadStartAddress on this VM); LoadList() reseeds its scan from this.
+            TopAddress = result.NewBaseAddress;
+            ReadCount = result.NewCount;
+            return "";
+        }
 
         // ----------------------------------------------------------------
         // Legacy header-only commit (kept for the stable VM surface). The

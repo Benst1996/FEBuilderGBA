@@ -137,18 +137,20 @@ public class ImageMagicCSACreatorParityTests
     }
 
     // -----------------------------------------------------------------
-    // Deferred affordances must reference open follow-up #500
-    // (Copilot CLI plan review #3).
+    // Deferred affordances (#886 wired Export/OpenSource/SelectSource;
+    // #892 wired Editor; Import remains stub).
     // -----------------------------------------------------------------
 
+    /// <summary>
+    /// Import (#886 part 2) is still a stub — must be
+    /// IsEnabled="False" in the AXAML element (no tooltip text required).
+    /// </summary>
     [Theory]
     [InlineData("ImageMagicCSACreator_Import_Button")]
-    [InlineData("ImageMagicCSACreator_Export_Button")]
-    [InlineData("ImageMagicCSACreator_OpenSource_Button")]
-    [InlineData("ImageMagicCSACreator_SelectSource_Button")]
-    [InlineData("ImageMagicCSACreator_Editor_Button")]
-    [InlineData("ImageMagicCSACreator_ListExpand_Button")]
-    public void View_DeferredButton_IsDisabledAndReferencesFollowupIssue(string automationId)
+    // NOTE: ListExpand_Button is NO LONGER deferred — wired in #837.
+    // Export/OpenSource/SelectSource are NO LONGER deferred — wired in #886.
+    // Editor is NO LONGER deferred — wired in #892.
+    public void View_StubButton_IsDisabled(string automationId)
     {
         string axaml = ReadAxaml();
         int idx = axaml.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
@@ -161,7 +163,123 @@ public class ImageMagicCSACreatorParityTests
         string element = axaml.Substring(elementStart, elementEnd - elementStart + 1);
 
         Assert.Contains("IsEnabled=\"False\"", element);
-        Assert.Contains("#500", element);
+    }
+
+    /// <summary>
+    /// #892 — Editor button is now wired: AXAML element must NOT hard-code
+    /// IsEnabled="False" and must have the Click handler.
+    /// Mirrors the FEditor JumpEditor_Click parity (symmetric).
+    /// </summary>
+    [Fact]
+    public void View_EditorButton_IsWired()
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf("AutomationId=\"ImageMagicCSACreator_Editor_Button\"",
+            StringComparison.Ordinal);
+        Assert.True(idx >= 0, "Editor button AutomationId not found in AXAML");
+        int elementStart = axaml.LastIndexOf('<', idx);
+        int elementEnd = axaml.IndexOf("/>", idx, StringComparison.Ordinal);
+        Assert.True(elementEnd > elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 2);
+
+        // #892: Editor button must NOT be permanently disabled (mirrors FEditor JumpEditorButton).
+        Assert.DoesNotContain("IsEnabled=\"False\"", element);
+        Assert.Contains("Click=\"Editor_Click\"", element);
+    }
+
+    /// <summary>
+    /// Export is wired in #886 — AXAML element must NOT hard-code
+    /// IsEnabled="False" (enablement is driven at runtime by
+    /// UpdateExportButtonEnabled) and must have the Click handler.
+    /// </summary>
+    [Fact]
+    public void View_ExportButton_IsWired()
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf("AutomationId=\"ImageMagicCSACreator_Export_Button\"",
+            StringComparison.Ordinal);
+        Assert.True(idx >= 0, "Export button AutomationId not found in AXAML");
+        int elementStart = axaml.LastIndexOf('<', idx);
+        int elementEnd = axaml.IndexOf("/>", idx, StringComparison.Ordinal);
+        Assert.True(elementEnd > elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 2);
+
+        // #886: Export button must NOT be permanently disabled.
+        // Runtime enablement (UpdateExportButtonEnabled) gates it on CSA detection.
+        Assert.DoesNotContain("ToolTip.Tip=\"Pending", element);
+        Assert.Contains("Click=\"Export_Click\"", element);
+    }
+
+    /// <summary>
+    /// OpenSource and SelectSource are wired in #886 — their AXAML elements
+    /// must use IsVisible (not IsEnabled) for their initial hidden state.
+    /// </summary>
+    [Theory]
+    [InlineData("ImageMagicCSACreator_OpenSource_Button")]
+    [InlineData("ImageMagicCSACreator_SelectSource_Button")]
+    public void View_SourceButton_IsWired_WithIsVisible(string automationId)
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf($"AutomationId=\"{automationId}\"",
+            StringComparison.Ordinal);
+        Assert.True(idx >= 0, $"AutomationId {automationId} not found in AXAML");
+        int elementStart = axaml.LastIndexOf('<', idx);
+        int elementEnd = axaml.IndexOf("/>", idx, StringComparison.Ordinal);
+        Assert.True(elementEnd > elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 2);
+
+        // Wired in #886: use IsVisible="False" for initial hidden state.
+        Assert.Contains("IsVisible=\"False\"", element);
+        // No longer permanently disabled.
+        Assert.DoesNotContain("ToolTip.Tip=\"Pending", element);
+    }
+
+    /// <summary>
+    /// #837 — the CSA "Data Expansion" (ListExpand) button is now WIRED: the
+    /// AXAML element no longer hard-codes IsEnabled="False" nor references the
+    /// stale #500 follow-up (enablement is driven at runtime by
+    /// UpdateListExpandVisibility), and the Click handler is bound.
+    /// </summary>
+    [Fact]
+    public void View_ListExpandButton_IsWired()
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf("AutomationId=\"ImageMagicCSACreator_ListExpand_Button\"",
+            StringComparison.Ordinal);
+        Assert.True(idx >= 0, "ListExpand button AutomationId not found in AXAML");
+        int elementStart = axaml.LastIndexOf('<', idx);
+        // Find the end of THIS Button element (its self-closing "/>"), so the
+        // Click attribute on the same element is included in the slice.
+        int elementEnd = axaml.IndexOf("/>", idx, StringComparison.Ordinal);
+        Assert.True(elementEnd > elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 2);
+
+        Assert.DoesNotContain("IsEnabled=\"False\"", element);
+        Assert.DoesNotContain("#500", element);
+        Assert.Contains("Click=\"ListExpand_Click\"", element);
+    }
+
+    // -----------------------------------------------------------------
+    // #892 — NavigationTargets manifest (parity with FEditor).
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// #892: CSA Creator ViewModel must expose INavigationTargetSource with
+    /// a single JumpToToolAnimationCreator entry, exactly mirroring
+    /// ImageMagicFEditorViewModel.GetNavigationTargets().
+    /// </summary>
+    [Fact]
+    public void ViewModel_NavigationTargets_HasJumpToToolAnimationCreator()
+    {
+        var vm = new ImageMagicCSACreatorViewModel();
+        var source = (INavigationTargetSource)vm;
+        var targets = source.GetNavigationTargets();
+
+        Assert.Single(targets);
+        var t = targets[0];
+        Assert.Equal("JumpToToolAnimationCreator", t.CommandName);
+        Assert.Equal("ToolAnimationCreatorView", t.TargetViewType.Name);
+        Assert.Equal("#500", t.IssueRef);
     }
 
     // -----------------------------------------------------------------
@@ -347,6 +465,98 @@ public class ImageMagicCSACreatorParityTests
             Assert.Equal(MagicSystemKind.CsaCreator, vm.MagicKind);
         }
         finally { CoreState.ROM = prevRom; }
+    }
+
+    // -----------------------------------------------------------------
+    // #1021 — live CSA frame preview + working MoreData link.
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// #1021: the dead static &lt;Image PreviewImage&gt; placeholder is replaced
+    /// by a GbaImageControl named MagicFramePreview (mirrors the FEditor preview),
+    /// and the "#500" placeholder tooltip is gone.
+    /// </summary>
+    [Fact]
+    public void View_PreviewIsGbaImageControl_NoStubTooltip()
+    {
+        string axaml = ReadAxaml();
+        Assert.Contains("controls:GbaImageControl", axaml);
+        Assert.Contains("Name=\"MagicFramePreview\"", axaml);
+        // The dead Image placeholder named PreviewImage must be gone.
+        Assert.DoesNotContain("Name=\"PreviewImage\"", axaml);
+        // The "#500" pending-extraction tooltips on the preview + link must be gone.
+        Assert.DoesNotContain("Pending Core extraction - tracked by #500.", axaml);
+    }
+
+    /// <summary>
+    /// #1021: the code-behind has a RenderPreview() that calls the VM's
+    /// RenderCsaFramePreview, and a FrameBox.ValueChanged handler that re-renders.
+    /// </summary>
+    [Fact]
+    public void View_HasRenderPreview_AndFrameValueChangedHandler()
+    {
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        Assert.Contains("void RenderPreview()", source);
+        Assert.Contains("RenderCsaFramePreview(out", source);
+        Assert.Contains("void FrameBox_ValueChanged(", source);
+        // The FrameBox ValueChanged handler must be wired in the AXAML.
+        string axaml = ReadAxaml();
+        Assert.Contains("ValueChanged=\"FrameBox_ValueChanged\"", axaml);
+    }
+
+    /// <summary>
+    /// #1021: the zoom combo maps to the GbaImageControl zoom (no ROM re-render).
+    /// </summary>
+    [Fact]
+    public void View_ZoomCombo_MapsToImageControlZoom()
+    {
+        string axaml = ReadAxaml();
+        Assert.Contains("SelectionChanged=\"ZoomComboBox_SelectionChanged\"", axaml);
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        Assert.Contains("void ZoomComboBox_SelectionChanged(", source);
+        Assert.Contains("MagicFramePreview.Zoom", source);
+    }
+
+    /// <summary>
+    /// #1021 Part A: the "Find new resources online" label is now a working
+    /// link — a TextBlock with PointerPressed="LinkInternet_Click" + a handler
+    /// mirroring the FEditor's MoreData wiki opener.
+    /// </summary>
+    [Fact]
+    public void View_FindMoreDataLink_IsWired_ToMoreData()
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf("AutomationId=\"ImageMagicCSACreator_FindMoreData_Label\"",
+            StringComparison.Ordinal);
+        Assert.True(idx >= 0, "FindMoreData label AutomationId not found in AXAML");
+        int elementStart = axaml.LastIndexOf('<', idx);
+        int elementEnd = axaml.IndexOf("/>", idx, StringComparison.Ordinal);
+        Assert.True(elementEnd > elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 2);
+
+        // Must be a clickable link (blue / underline) wired to LinkInternet_Click.
+        Assert.Contains("PointerPressed=\"LinkInternet_Click\"", element);
+        Assert.Contains("TextDecorations=\"Underline\"", element);
+        Assert.DoesNotContain("#500", element);
+
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        Assert.Contains("void LinkInternet_Click(", source);
+        Assert.Contains("wiki/MoreData", source);
+    }
+
+    /// <summary>
+    /// #1021: the ViewModel exposes the read-only RenderCsaFramePreview + the
+    /// CanRenderPreview gate (CsaCreator + IsLoaded) the view wires.
+    /// </summary>
+    [Fact]
+    public void ViewModel_CanRenderPreview_GatedOnCsaAndLoaded()
+    {
+        var vm = new ImageMagicCSACreatorViewModel();
+        // Not loaded + no system → cannot render; preview returns null.
+        Assert.False(vm.CanRenderPreview);
+        var img = vm.RenderCsaFramePreview(out string log);
+        Assert.Null(img);
+        Assert.False(string.IsNullOrEmpty(log));
     }
 
     // -----------------------------------------------------------------

@@ -14152,6 +14152,9 @@ Avalonia 跨平台预览
 :Open _Last ROM
 打开上次的ROM(_L)
 
+:Open _Decomp Project...
+打开反编译工程...(_D)
+
 :_Recent Files
 最近的文件(_R)
 
@@ -14685,6 +14688,12 @@ MIDI导入
 
 :Select Instrument
 选择乐器
+
+:Select Instrument Set...
+选择乐器组...
+
+:(use destination's current voicegroup)
+（使用目标曲目的当前乐器组）
 
 :Import Wave
 导入波形
@@ -15955,6 +15964,36 @@ CSA魔法创建器
 
 :Chapter ID:
 章节ID:
+
+:Route:
+路线
+
+:0x01 Prologue / Early:
+0x01 序盘
+
+:0x02 Eirika Route:
+0x02 艾里克线
+
+:0x03 Ephraim Route:
+0x03 艾夫拉姆线
+
+:0xFF Unconditional:
+0xFF 无条件
+
+:Achievement Flag:
+达成标志
+
+:Killer Unit (0x01):
+击杀者 (0x01)
+
+:Unknown (0x0A):
+未知 (0x0A)
+
+:Unknown (0x0B):
+未知 (0x0B)
+
+:Unknown (0x0E):
+未知 (0x0E)
 
 :Chapter Image Ptr:
 章节图像指针:
@@ -17359,6 +17398,12 @@ LZ77压缩工具
 
 :Load Other ROM
 加载其他ROM
+
+:Auto Search
+自动搜索
+
+:Cross-ROM auto-tracking: name search, LDR-map symmetry, and match-window retry against the loaded target ROM.
+跨ROM自动追踪：针对已加载的目标ROM进行名称搜索、LDR映射对称性匹配和匹配窗口重试。
 
 :LDR Match\r\nAddress
 LDR匹配\r\n地址
@@ -19640,6 +19685,18 @@ W94: Unknown
 :Warning: Stat Bonuses pointer is null (P12=0). Consider allocating.
 警告: 属性加成指针为空 (P12=0)。请考虑分配空间。
 
+:New-alloc Stat Bonuses
+新分配属性加成
+
+:New-alloc Effectiveness
+新分配特效
+
+:Allocate a new Stat Bonuses (P12) block and write its pointer into this item (mirrors WF new-alloc).
+为该物品新分配属性加成(P12)数据块并写入指针 (镜像 WF 的新分配)。
+
+:Allocate a new Effectiveness (P16) block and write its pointer into this item (mirrors WF new-alloc).
+为该物品新分配特效(P16)数据块并写入指针 (镜像 WF 的新分配)。
+
 :Warning: Zero region (direct match)
 警告: 零区域 (直接匹配)
 
@@ -20664,6 +20721,9 @@ ID=00 Empty 已预留为空数据。\r\n请勿设置 0x0 之外的值。
 :Failed to allocate new event-unit block.
 分配新的事件单位区块失败。
 
+:Failed to allocate a new palette block. Check ROM free space.
+分配新的调色板区块失败。请检查ROM的剩余空间。
+
 :Allocated new event-unit block ({0} units) at 0x{1:X08}.
 已在 0x{1:X08} 分配新的事件单位区块（{0} 个单位）。
 
@@ -21338,6 +21398,9 @@ to:
 :Make Selected Class Independent
 分离独立所选职业
 
+:The list is empty. Separating an empty list has no effect. Make it independent anyway?
+列表为空。分离一个空列表没有意义，仍要分离独立吗？
+
 :Click here for level/skill details (opens wiki)
 习得等级与技能的详细，请点击这里查看。
 
@@ -21416,8 +21479,14 @@ OBJ+BG 从左到右
 :Import Music File
 从文件导入音乐
 
-:Imports MIDI files (preview only). Full Import dispatch (MIDI / Wave / Instrument) pending Core extraction.
-导入 MIDI 文件（仅预览）。完整的导入分发（MIDI / Wave / Instrument）正在等待 Core 提取。
+:Imports by file extension: a MIDI (.mid), a raw RIFF WAV (.wav, builds a one-track song that plays the sample), an instrument set (.instrument), or a SondFont source (.s, pick an instrument set then assemble).
+按文件扩展名导入: MIDI（.mid）、原始 RIFF WAV（.wav，构建一个播放该采样的单轨歌曲）、乐器集（.instrument）或 SondFont 源文件（.s，先选择乐器集再汇编）。
+:Instrument Set Files
+乐器集文件
+:SondFont Source Files
+SondFont 源文件
+:Music Files
+音乐文件
 
 :Export Music File
 将音乐导出到文件
@@ -21785,6 +21854,9 @@ ED 关系
 :Include AI Hints
 添加 AI 登场人物提示
 
+:Append unit translate-info hints (name/role/flags) for every face the text loads.
+为文本加载的每个头像追加单位翻译信息提示（姓名/角色/标志）。
+
 :Export Limit:
 导出限制：
 
@@ -21796,6 +21868,30 @@ ED 关系
 
 :Add Reference
 添加引用信息
+
+:Insert Escape Code
+插入转义代码
+
+:Jump to Portrait
+跳转到头像
+
+:(No portrait code in this text)
+(此文本中没有头像代码)
+
+:(Visiting character — no fixed portrait to jump to)
+(访问角色 — 没有可跳转的固定头像)
+
+:(Invalid portrait id in this text)
+(此文本中的头像ID无效)
+
+:Select an escape code to insert
+选择要插入的转义代码
+
+:Category
+类别
+
+:Escape Code
+转义代码
 
 :(out-of-scope)
 (超出范围)
@@ -21820,6 +21916,36 @@ ED 关系
 
 :Out-of-scope: requires UX review of SaaS-call disclaimer
 超出范围：需要 SaaS 调用免责声明的 UX 评审
+
+:Source language of the currently-selected text
+当前所选文本的源语言
+
+:Target language to translate the selected text into
+将所选文本翻译成的目标语言
+
+:Translate the selected text online; the result is placed in the Edit box for review before writing
+在线翻译所选文本；结果会放入编辑框，便于写入前检查
+
+:(No text to translate)
+(没有可翻译的文本)
+
+:(Select a source and target language)
+(请选择源语言和目标语言)
+
+:(Source and target language are the same)
+(源语言与目标语言相同)
+
+:Translating...
+正在翻译...
+
+:Translation failed: the service returned no result.
+翻译失败：服务未返回任何结果。
+
+:Google translation returned an error. You may have sent too many requests.\r\n\r\n{0}
+Google翻译返回了错误。你可能发送了过多请求。\r\n\r\n{0}
+
+:Translation failed: {0}
+翻译失败：{0}
 
 :Out-of-scope: requires UseTextIDCache.Update Core extraction
 超出范围：需要 UseTextIDCache.Update Core 提取
@@ -21945,8 +22071,58 @@ git
 :Configure Git (version control).\r\nGit is used to keep config/patch2 patch data up to date.\r\nInstalling it makes pulling the latest patches easy.
 请配置 Git（版本控制系统）。\r\nGit 用于更新 config/patch2 补丁数据。\r\n安装后可便捷拉取最新补丁。
 
-:Download requires WinForms host. Use Browse instead.
-该下载功能仅 WinForms 版本支持，请使用浏览按钮替代。
+:Windows-only download — use Browse to set the path manually.
+自动下载仅支持 Windows，请使用浏览按钮手动设置路径。
+:Download
+下载
+:Downloading
+正在下载
+:Downloaded: {0}
+下载完成: {0}
+:Downloaded {0} tool(s).
+已下载 {0} 个工具。
+:Download failed. Use Browse to set the path manually.
+下载失败，请使用浏览按钮手动设置路径。
+:This will download an executable from:
+{0}
+
+The downloaded program will be placed under the app folder.
+
+Continue?
+将从以下位置下载可执行文件:
+{0}
+
+下载的程序将放置在 app 文件夹下。
+
+是否继续？
+:This will download executables for {0} from:
+将从以下位置下载 {0} 的可执行文件:
+:The downloaded programs will be placed under the app folder.
+
+Continue?
+下载的程序将放置在 app 文件夹下。
+
+是否继续？
+:Download and install Git
+下载并安装 Git
+:This will download the official Git for Windows installer from:
+{0}
+
+It will RUN the installer, which may request administrator (UAC) elevation.
+
+Continue?
+将从以下位置下载官方 Git for Windows 安装程序:
+{0}
+
+将运行该安装程序，可能会请求管理员(UAC)权限提升。
+
+是否继续？
+:Git installed: {0}
+已安装 Git: {0}
+:Git download/install failed. Use Browse to set the path manually.
+Git 下载/安装失败，请使用浏览按钮手动设置路径。
+:Git was installed but failed validation. Use Browse to set the path manually.
+Git 已安装但验证失败，请使用浏览按钮手动设置路径。
 
 :Setup is complete. The wizard saved your tool paths and preferences.\r\n\r\nYou can change these at any time from Menu -> Options.\r\n\r\nPress Finish to close this wizard.
 设置已完成。向导已保存您的工具路径与偏好设置。\r\n\r\n您可以随时通过 菜单 -> 选项 进行修改。\r\n\r\n按完成按钮关闭该向导。
@@ -22143,8 +22319,8 @@ English
 :Deferred KnownGap: Import requires the rendered sample bitmap (WinForms-coupled DrawBattleAnime via PaletteFormRef.MakePaletteBitmapToUIEx) (#399).
 待支持的已知缺口: 导入需要渲染好的样本位图 (依赖 WinForms 的 PaletteFormRef.MakePaletteBitmapToUIEx -> DrawBattleAnime) (#399)。
 
-:Deferred KnownGap: Export requires the rendered sample bitmap (WinForms-coupled DrawBattleAnime via ImageFormRef.ExportImage) (#399).
-待支持的已知缺口: 导出需要渲染好的样本位图 (依赖 WinForms 的 ImageFormRef.ExportImage -> DrawBattleAnime) (#399)。
+:Export the rendered battle-animation sample (360x290 grid) to a PNG file. Read-only — no ROM write. Enabled once a sample renders.
+将渲染好的战斗动画样本 (360x290 网格) 导出为 PNG 文件。只读 — 不写入 ROM。样本渲染成功后启用。
 
 :Fit to window
 适应窗口
@@ -22158,8 +22334,8 @@ Core RunRedo API 待支持 - 由 #500 跟踪。
 :Palette Index
 调色板索引
 
-:Live bitmap preview pending Core extraction - tracked by #500.
-实时位图预览待 Core 抽出 - 由 #500 跟踪。
+:Live bitmap-of-the-graphic preview recolored by the grid colors (#1023).
+由网格颜色重新着色的图形实时位图预览 (#1023)。
 
 :Edit R/G/B 0-248 (5-bit ticks)
 编辑 R/G/B 0-248 (5位步进)
@@ -22313,8 +22489,34 @@ tcs 参数??
 KnownGap: 等待 Core 抽取。
 :KnownGap: live bitmap preview pending Core extraction.
 KnownGap: 实时位图预览等待 Core 抽取。
-:KnownGap: list-expand requires DataExpansionCore wiring not yet ported.
-KnownGap: 列表扩展需要 DataExpansionCore 接线尚未移植。
+:Grow the border table by N rows (ExpandTableTo + RepointAllReferences).
+将国境表扩展 N 行(ExpandTableTo + RepointAllReferences)。
+:Grow the icon-data table by N rows (ExpandTableTo + RepointAllReferences).
+将图标数据表扩展 N 行(ExpandTableTo + RepointAllReferences)。
+:Enter the new entry count for the world map border list (current: {0}, max: 255).
+输入世界地图国境列表的新条目数(当前: {0}, 最大: 255)。
+:Enter the new entry count for the world map icon-data list (current: {0}, max: 255).
+输入世界地图图标数据列表的新条目数(当前: {0}, 最大: 255)。
+:Expanded world map border list to {0} entries.
+已将世界地图国境列表扩展为 {0} 个条目。
+:Expanded world map icon-data list to {0} entries.
+已将世界地图图标数据列表扩展为 {0} 个条目。
+:Expand the magic-effect + CSA spell tables to 254 entries.
+将魔法特效表 + CSA魔法表扩展为 254 个条目。
+:Expand the magic table? This grows the list to 254 entries.
+是否扩展魔法表？这会将列表扩展为 254 个条目。
+:Expanded magic list to 254 entries.
+已将魔法列表扩展为 254 个条目。
+:List expansion failed: {0}
+列表扩展失败: {0}
+:CSASpellTable Not Found.
+未找到 CSA 魔法表。
+:New count ({0}) must be greater than the current count ({1}).
+新数量({0})必须大于当前数量({1})。
+:ROM not loaded.
+未加载 ROM。
+:Table expansion failed.
+表扩展失败。
 :KnownGap: DecreaseColorTSAToolForm not yet ported.
 KnownGap: DecreaseColorTSAToolForm 尚未移植。
 :KnownGap: ResourceCache source-file feature not yet wired in Avalonia.
@@ -22617,8 +22819,8 @@ WF 中的 N03 子标签包含 16 个无固定语义的通用字节 (B16..B31)。
 :Adds the effect of another skill (KnownGap: tracked by #374)
 添加其他技能的效果 (KnownGap: #374 跟踪中)
 
-:PatchManagerView does not yet expose JumpToSelectStruct (tracked by #374).
-PatchManagerView 尚未暴露 JumpToSelectStruct (#374 跟踪中)。
+:Opens the Patch Manager and filters/selects the FE8N SKILL COMBAT ART patch. Struct-level row selection is a #374 follow-up.
+打开补丁管理器并筛选/选中 FE8N SKILL COMBAT ART 补丁。结构体级别的行选择是 #374 的后续工作。
 
 :Move to COMBAT_ART
 跳转到 COMBAT_ART
@@ -23699,6 +23901,12 @@ FE6 不支持按地图调整难度。FE6 的地图设定结构体没有本编辑
 :Mouth crop
 口部裁剪
 
+:Per-frame preview (96x80)
+逐帧预览 (96x80)
+
+:Live composite of the selected frame's eye/mouth crop onto the face. Auto-quantized source only — Share/Custom palette and Fuchidori are not reflected here (they change only the final import).
+将所选帧的眼部/口部裁剪实时合成到脸上的预览。仅显示自动减色后的源图 —— 共享/自定义调色板与描边不会在此反映（它们只影响最终导入）。
+
 :Frame (0-10):
 帧 (0-10):
 
@@ -23740,3 +23948,678 @@ FE6 不支持按地图调整难度。FE6 的地图设定结构体没有本编辑
 
 :No instrument set selected
 未选择乐器组
+
+:KnownGap: border import (OAM assembly) is a separate follow-up.
+KnownGap: 国境导入（OAM汇编）是单独的后续任务。
+
+:Export the border AP preview to PNG.
+将国境AP预览导出为PNG。
+
+:Import is a follow-up (#878 PR2).
+Import 是后续任务（#878 PR2）。
+
+:Import CSA magic animation script
+导入CSA魔法动画脚本
+
+:CSA magic animation imported successfully.
+CSA魔法动画导入成功。
+
+:CSA magic animation import failed: {0}
+CSA魔法动画导入失败: {0}
+
+:CSA Creator magic-system not detected. Install the patch first.
+未检测到CSA Creator魔法系统，请先安装补丁。
+
+:Import a CSA magic animation (.txt script + PNGs) into the selected slot.
+将CSA魔法动画（.txt脚本 + PNG）导入选中的槽位。
+
+:Import a 16x16 skill icon (128 raw 4bpp bytes, in-place, undoable).
+导入16x16技能图标（128字节原始4bpp，原地覆盖，可撤销）。
+
+:Export the 16x16 skill icon as a PNG.
+将16x16技能图标导出为PNG。
+
+:Import a same-size image as the main tilesheet (palette and TSA are not changed).
+导入与主图块表相同尺寸的图像（不会更改调色板和TSA）。
+
+:Select a palette entry first.
+请先选择一个调色板条目。
+
+:Image service not initialized.
+图像服务未初始化。
+
+:The image must use 16 colors or fewer. Reduce its color count and try again.
+图像必须使用16种或更少的颜色。请减少颜色数量后重试。
+
+:Import failed:
+导入失败：
+
+:Export Image to PNG file
+将图像导出为PNG文件
+
+:Import Image from PNG file
+从PNG文件导入图像
+:No valid animation pointer to import into.
+没有可导入的有效动画指针。
+
+:Import Skill Animation Script
+导入技能动画脚本
+
+:Skill Animation Script
+技能动画脚本
+
+:Cannot read script file: {0}
+无法读取脚本文件: {0}
+
+:Skill animation import failed: {0}
+技能动画导入失败: {0}
+
+:Skill animation imported successfully.
+技能动画导入成功。
+
+:Bulk Export Skill Config
+批量导出技能配置
+
+:Skill Config TSV
+技能配置TSV
+
+:Bulk export failed: {0}
+批量导出失败: {0}
+
+:Bulk exported to: {0}
+批量导出至: {0}
+
+:Set ID
+设置ID
+
+:Sub-list
+子列表
+
+:The FE8N Ver1 Class/Item/Other tabs are the SAME shared 16 ext-bytes (B16..B31) already edited on the Unit tab — not a separate per-skill array.
+FE8N Ver1 的 类别/物品/其他 标签页是与单位标签页上已可编辑的相同的共享 16 个扩展字节 (B16..B31) — 而非每个技能独立的数组。
+
+:WinForms shows them as 4 tabs of the same 16 bytes; Avalonia surfaces all 16 editable on the Unit tab. Edit them there (#930).
+WinForms 将相同的 16 个字节显示为 4 个标签页；Avalonia 在单位标签页上让全部 16 个可编辑。请在那里编辑 (#930)。
+
+:The N03 sub-tab in WF holds 16 generic bytes (B16..B31) with no fixed semantics, shown there as unlabeled NumericUpDowns. Avalonia surfaces all 16 editable on the Unit tab; edit them there (#930).
+WF 中的 N03 子标签页保存 16 个无固定语义的通用字节 (B16..B31)，在那里显示为无标签的数值框。Avalonia 在单位标签页上让全部 16 个可编辑；请在那里编辑 (#930)。
+
+:The editable per-skill sub-list arrays live in FE8N Ver2/Ver3 (Unit/Class/Item/Item2/Composite), not Ver1.
+可编辑的每个技能子列表数组位于 FE8N Ver2/Ver3 (单位/类别/物品/物品2/复合) 中，而不在 Ver1。
+
+:Main (16-byte)
+主表 (16字节)
+
+:Tutorial 1 - Lyn (12-byte)
+教程1 琳篇 (12字节)
+
+:Tutorial 2 - Eliwood (12-byte)
+教程2 艾利乌德篇 (12字节)
+
+:Secondary (12-byte)
+次表 (12字节)
+
+
+:No map-change entry is selected. Select a map with change-data before importing.
+未选择地图变化条目。导入前请先选择一个带有变化数据的地图。
+
+:The selected record has zero width or height. Set the W/H fields and Write before importing.
+所选记录的宽度或高度为0。导入前请先设置W/H字段并写入。
+
+:Enter the SOURCE change-data address to import from (W×H×2 = {0} bytes will be copied into this record).
+请输入要导入的源变化数据地址(W×H×2 = {0}字节将被复制到此记录)。
+
+:Imported change data into the selected record.
+已将变化数据导入到所选记录。
+
+:Pointer import failed: {0}
+指针导入失败: {0}
+
+:No map-change entry is selected. Select a map with change-data first.
+未选择地图变化条目。请先选择一个带有变化数据的地图。
+
+:Cannot import: the selected record has zero width or height. Set the W/H fields first.
+无法导入: 所选记录的宽度或高度为0。请先设置W/H字段。
+
+:Cannot import: the change region size ({0}×{1}) is out of range.
+无法导入: 变化区域尺寸({0}×{1})超出范围。
+
+:Cannot import: the source address (0x{0:X08}) is not a valid ROM address.
+无法导入: 源地址(0x{0:X08})不是有效的ROM地址。
+
+:Cannot import: the source data (0x{0:X08} + {1} bytes) runs past the end of the ROM.
+无法导入: 源数据(0x{0:X08} + {1}字节)超出了ROM的末尾。
+
+:Cannot import: failed to read {0} bytes from the source address.
+无法导入: 无法从源地址读取{0}字节。
+
+:Cannot import: ran out of ROM free space while writing the change data.
+无法导入: 写入变化数据时ROM空闲空间不足。
+
+:No ROM loaded.
+未加载ROM。
+
+:This address is not inside a known struct data table, so it cannot be exported as TSV/CSV/EA.
+此地址不在已知的结构体数据表内，无法导出为 TSV/CSV/EA。
+
+:This address is not inside a known struct data table, so it cannot be imported from TSV.
+此地址不在已知的结构体数据表内，无法从 TSV 导入。
+
+:No struct definition for '{0}'.
+没有 '{0}' 的结构体定义。
+
+:Export {0} {1}
+导出 {0} 为 {1}
+
+:Exported {0} entries to {1}
+已将 {0} 条记录导出到 {1}。
+
+:No data to export.
+没有可导出的数据。
+
+:Export failed: {0}
+导出失败：{0}
+
+:Import {0} TSV
+从 TSV 导入 {0}
+
+:TSV file has no data rows.
+TSV 文件没有数据行。
+
+:Imported {0} entries from {1}
+已从 {1} 导入 {0} 条记录。
+
+:Import failed: {0}
+导入失败：{0}
+
+:There is no AI script to export. Re-read the script first.
+没有可导出的AI脚本。请先重新读取脚本。
+
+:AI script exported to
+AI脚本已导出到:
+
+:No valid AI opcodes were found in the selected file.
+在所选文件中未找到有效的AI操作码。
+
+:Imported AI opcodes:
+已导入的AI操作码:
+
+:Press Write to save to ROM.
+请点击写入按钮保存到ROM。
+
+:Re-read the AI script before importing.
+导入前请重新读取AI脚本。
+
+:Copy the 16 palette entries to the clipboard as GBA 5-5-5 hex.
+将16色调色板作为GBA 5-5-5十六进制复制到剪贴板。
+
+:Export the raw main tilesheet (LZ77-decompressed 4bpp tiles) as a PNG.
+将主图块表（LZ77解压的4bpp图块）导出为PNG。
+
+:Importing replaces the selected song: the converted MIDI is appended to ROM free space and the song-table entry is repointed at it. The change is a single undo step. Pick a destination song on the left, then browse a MIDI file and import.
+导入将替换所选乐曲：转换后的MIDI会追加到ROM的空闲空间，并将乐曲表项重新指向它。该操作为单步撤销。请先在左侧选择目标乐曲，然后浏览MIDI文件并导入。
+
+:Import to ROM
+导入到ROM
+
+:Parse failed
+解析失败
+:Flags (W0):
+标志 (W0):
+:Anime Type (W2):
+动画类型 (W2):
+:Image Pointer (P4):
+图像指针 (P4):
+:Frame Step:
+帧步:
+:Full Sheet
+完整图表
+:Jump to Move Icon
+跳转到移动图标
+:Self Army
+自军
+:Ally Army
+友军
+:Enemy Army
+敌军
+:Gray Army
+灰色
+:Four Army
+第四军
+
+:FE8N Ver1 has no icon import/export — WinForms SkillConfigFE8NSkillForm is render-only, and this variant's icon address lacks the 0x100 page offset v2/v3 use. Disabled by design (#1008).
+FE8N Ver1 没有图标导入/导出功能 — WinForms 的 SkillConfigFE8NSkillForm 仅供显示，此变体的图标地址缺少 v2/v3 使用的 0x100 页面偏移。设计上已禁用 (#1008)。
+
+:FE8N Ver1 has no animation pointer or animation I/O in WinForms (render-only). Disabled by design (#1008).
+FE8N Ver1 在 WinForms 中没有动画指针或动画 I/O（仅供显示）。设计上已禁用 (#1008)。
+
+:Bulk Import/Export is not available for the C-SkillSys variant (unimplemented in WinForms too).
+C-SkillSys 版本不支持批量导入/导出（WinForms 版本同样未实现）。
+
+:List expansion is not yet implemented for the skill-config tables (multi-table / multi-pointer per patch variant).
+技能配置表的列表扩展尚未实现（每个补丁版本为多表/多指针结构）。
+
+:Sappy emulator playback is Windows-only (user32 P/Invoke); use the WinForms version of FEBuilderGBA.
+Sappy 模拟器播放为 Windows 专用（user32 P/Invoke），请使用 WinForms 版 FEBuilderGBA。
+
+:Wave/instrument export/import is a planned cross-platform enhancement (needs the SongUtil DirectSound port) — tracked by #1057.
+波形/乐器的导出/导入是计划中的跨平台增强功能（需移植 SongUtil 的 DirectSound 解码） — 见 #1057。
+
+:Pending Core alloc+repoint / DataExpansionCore wiring — tracked separately
+等待 Core 的 alloc+repoint / DataExpansionCore 接线 — 单独跟踪
+
+:Allocate a fresh palette block in free space and repoint this slot's P12
+在空闲空间分配一个新的调色板区块，并重新指向此槽位的 P12
+
+:Actual size
+实际大小
+
+:Cell X
+单元格 X
+
+:Cell Y
+单元格 Y
+
+:Tile ID
+图块 ID
+
+:H-Flip
+水平翻转
+
+:V-Flip
+垂直翻转
+
+:Palette Bank
+调色板组
+
+:Apply to Cell
+应用到单元格
+
+:TSA Cell
+TSA 单元格
+
+:Per-cell editing supports non-header TSA only — header-TSA editing tracked separately.
+逐单元格编辑仅支持非头部 TSA — 头部 TSA 的编辑另行跟踪处理。
+
+:After Coordinate Move Path (FE8)
+到达坐标移动路径 (FE8)
+
+:Add Coord
+添加坐标
+
+:Remove Coord
+删除坐标
+
+:Row 0 is the start position (X/Y/Ext persist to W4). Rows 1+ are the move-path steps.
+第0行是起始位置（X/Y/Ext保存到W4）。第1行及以后是移动路径步骤。
+
+:The after-coord list must contain at least the start row.
+到达坐标列表必须至少包含起始行。
+
+:Too many after-coords: {0} (max {1}).
+到达坐标过多: {0} (最大 {1})。
+
+:The event-unit block address is out of range.
+事件单位数据块地址超出范围。
+
+:Failed to write after-coords. Check ROM free space.
+写入到达坐标失败。请检查ROM空闲空间。
+
+:After-coord write failed: {0}
+写入到达坐标失败: {0}
+
+:UnitId
+单位ID
+
+:Unk1
+未知1
+
+:Unk2
+未知2
+
+:Wait
+等待
+
+:TSA Address:
+TSA地址:
+
+:TSA Type:
+TSA类型:
+
+:(4bpp + LZ77 image)
+(4bpp + LZ77图像)
+
+:None
+无
+
+:Compressed
+压缩
+
+:Compressed Header
+压缩头
+
+:Raw Header
+未压缩头
+
+:Raw
+未压缩
+
+:Expand the unit-palette list to a specified entry count
+将单位调色板列表扩展到指定的条目数
+
+:Cannot expand: the unit-palette list has no rows.
+无法扩展: 单位调色板列表没有行。
+
+:Enter the new entry count for the unit-palette list (current: {0}, max: 512).
+请输入单位调色板列表的新条目数 (当前: {0}, 最大: 512)。
+
+:Expanded unit-palette list to {0} entries.
+已将单位调色板列表扩展到{0}个条目。
+
+:Unit palette table not found in this ROM.
+在此ROM中未找到单位调色板表。
+
+:Unit palette table pointer is invalid.
+单位调色板表指针无效。
+
+:New count ({0}) exceeds the maximum of 512.
+新数量({0})超过了最大值512。
+
+:Cannot expand: no non-empty template row was found.
+无法扩展: 未找到非空的模板行。
+
+:Load a ROM first.
+请先加载ROM。
+
+:No change: new count equals current count.
+无变化: 新数量等于当前数量。
+
+:New count ({0}) must be greater than or equal to current count ({1}).
+新数量({0})必须大于或等于当前数量({1})。
+
+:Export this DirectSound instrument's GBA sample to a WAV file.
+将此 DirectSound 乐器的 GBA 采样导出为 WAV 文件。
+
+:Import a WAV file as this DirectSound instrument's GBA sample (appends to free space and repoints).
+将 WAV 文件作为此 DirectSound 乐器的 GBA 采样导入（追加到空闲空间并重定向指针）。
+
+:Export Wave
+导出波形
+
+:Wave Files
+波形文件
+
+:This instrument is not a DirectSound voice; there is no wave sample to export.
+该乐器不是 DirectSound 声音；没有可导出的波形采样。
+
+:Could not decode the DirectSound sample. The wave pointer may be invalid.
+无法解码 DirectSound 采样。波形指针可能无效。
+
+:This instrument is not a DirectSound voice; a wave sample cannot be imported here.
+该乐器不是 DirectSound 声音；无法在此导入波形采样。
+
+:Wave import failed.
+波形导入失败。
+
+:Wave import failed: {0}
+波形导入失败: {0}
+
+:Apply
+应用
+
+:Voice
+音色
+
+:Target Voice
+目标音色
+
+:Reassign every instrument voice used across all tracks of this song. Set a new target voice for each row, then Apply.
+重新分配此乐曲所有音轨中使用的乐器音色。为每一行设置目标音色,然后点击「应用」。
+
+:Note: Volume / Pan / Tempo bulk changes are not yet ported (voice reassignment only).
+注意:音量 / 声相 / 速度的批量修改尚未移植(仅支持音色重新分配)。
+
+:Color Reduction Tool
+减色工具
+
+:Reduce an image to GBA palettes (16 colors x N banks) for import.
+将图像减色为 GBA 调色板(16 色 × N 个色板)以便导入。
+
+:Input file:
+输入文件:
+
+:Output file:
+输出文件:
+
+:Method:
+方式:
+
+:Margin (Yohaku):
+边距(留白):
+
+:Palette banks:
+调色板数量:
+
+:Size method:
+尺寸方式:
+
+:Reserve 1st color:
+保留首色:
+
+:Ignore TSA (single flat palette)
+忽略 TSA(单一调色板)
+
+:Reduce Colors
+减色
+
+:Select a PNG, BMP or JPG file
+选择 PNG、BMP 或 JPG 文件
+
+:Select where to save the reduced PNG
+选择减色后 PNG 的保存位置
+
+:0: Manual (no preset)
+0: 手动(无预设)
+
+:1: BG & CG
+1: 背景与 CG
+
+:2: Battle BG
+2: 战斗背景
+
+:3: World Map (large)
+3: 世界地图(大)
+
+:4: World Map (event)
+4: 世界地图(事件用)
+
+:5: 256-color no-TSA
+5: 不使用 TSA 的 256 色
+
+:6: Status screen BG (FE8)
+6: 状态画面背景(FE8)
+
+:7: Single-image map chips
+7: 单图地图块
+
+:8: Single-image map chips (10 colors)
+8: 单图地图块 10 色
+
+:9: BG 256-color no-TSA (cutscene)
+9: 不使用 TSA 的背景 256 色(过场)
+
+:A: BG 224-color no-TSA (talk)
+A: 不使用 TSA 的背景 224 色(对话用)
+
+:Resize (crop/pad)
+调整大小(裁剪/填充)
+
+:Scale
+缩放
+
+:Yes
+是
+
+:Images
+图像
+
+:Please select a file to open.
+请选择要打开的文件名
+
+:Please select a file name to save.
+请选择要保存的文件名
+
+:Color reduction complete:
+减色完成:
+
+:Please select a valid input and output file.
+请选择有效的输入文件和输出文件。
+
+:Color reduction failed. See the log for details.
+减色失败。详情请查看日志。
+
+:Reducing colors...
+正在减色...
+:Export the whole instrument set (voicegroup) to a TSV index plus per-voice side files (recursive).
+将整个乐器组(音色组)导出为 TSV 索引文件加每个音色的附属文件(递归)。
+:Import a whole instrument set (voicegroup) from a TSV index plus its per-voice side files (recursive), appended to free space and repointed.
+从 TSV 索引文件加每个音色的附属文件导入整个乐器组(音色组)(递归),追加到空闲空间并重新指向。
+:No instrument set (voicegroup) is loaded to export.
+没有已加载的乐器组(音色组)可供导出。
+:Instrument set exported to {0}
+乐器组已导出到 {0}
+:Instrument set export failed: {0}
+乐器组导出失败:{0}
+:Export the main field-map preview to PNG.
+将主战场地图预览导出为PNG。
+:Import a 240x160 event image (auto-reduced to World Map (event) / 4 palettes).
+导入240x160事件图像（自动减色为世界地图(事件用)/4个调色板）。
+:Import a county border image (assembles OAM/AP). Requires a companion _NAME image in the same folder.
+导入国境图像(组装OAM/AP)。需要同一文件夹中有_NAME配套图像。
+
+:Reassign every instrument voice used across all tracks of this song, and/or nudge the song-wide Volume, Pan, and Tempo. Set the targets/deltas, then Apply.
+重新分配此乐曲所有音轨中使用的乐器音色，并/或微调整乐曲整体的音量、声相和速度。设置目标/增量后点击「应用」。
+
+:Reassign the instrument voices used by this track, and/or nudge its Volume and Pan. Set the targets/deltas, then Apply.
+重新分配此音轨使用的乐器音色，并/或微调其音量和声相。设置目标/增量后点击「应用」。
+
+:Volume delta:
+音量增量:
+
+:Pan delta:
+声相增量:
+
+:Tempo delta:
+速度增量:
+
+:Also nudge note velocities by Volume delta
+同时按音量增量调整音符力度
+
+:No track changes to apply.
+没有需要应用的音轨更改。
+
+:Track changes applied.
+音轨更改已应用。
+
+:Apply failed: {0}
+应用失败: {0}
+
+:Filter the TSV export to a single text category (WF parity).
+将 TSV 导出筛选为单一文本类别（WF 兼容）。
+
+
+:Transplant a song from another ROM into the current ROM. Open a donor ROM, select a song from each side, then Convert.
+将另一个 ROM 中的乐曲移植到当前 ROM。打开来源 ROM，从两侧各选择一首乐曲，然后点击“转换”。
+
+:Open Other ROM...
+打开另一个 ROM...
+
+:Other ROM: (none loaded)
+另一个 ROM: (未加载)
+
+:Current ROM Songs (destination)
+当前 ROM 的乐曲 (目标)
+
+:Other ROM Songs (source)
+另一个 ROM 的乐曲 (来源)
+
+:Convert (transplant ->)
+转换 (移植 ->)
+
+:Other ROM: {0} ({1} songs)
+另一个 ROM: {0} ({1} 首乐曲)
+
+:Transplant completed, but some instrument data was corrupt and only the recognized parts were imported.
+移植已完成，但部分乐器数据已损坏，仅导入了可识别的部分。
+
+:Open Decomp Project
+打开反编译工程
+
+:Decomp Project
+反编译工程
+
+:Decomp Build
+反编译构建
+
+:Build
+构建
+
+:Build & Reload
+构建并重新加载
+
+:Building...
+正在构建...
+
+:Run build command?
+运行构建命令？
+
+:Working directory:
+工作目录:
+
+:Failed to reload built ROM after build.
+构建后重新加载构建的ROM失败。
+
+:Preview may be stale — rebuild
+预览可能已过时 — 请重新构建
+
+: · needs rebuild
+ ·需要重新构建
+
+:Project has not opted into FEBuilder-managed builds. Add a build section to febuilder.project.json.
+此工程未启用FEBuilder托管构建。请在febuilder.project.json中添加build节。
+
+:Source-backed project · ROM is a build preview
+基于源码的工程·ROM 为构建预览
+
+:Not a decomp project directory.
+不是反编译工程目录。
+
+:Project found but no built ROM — run the build first, then reload.
+已找到工程但没有已构建的 ROM——请先执行构建，然后重新加载。
+
+:This is a source-backed decomp project. The built ROM is a preview and cannot be saved over. Edit the source and rebuild instead.
+这是一个基于源码的反编译工程。已构建的 ROM 仅为预览，无法直接覆盖保存。请改为编辑源码并重新构建。
+
+:This unit is ROM-only in decomp mode. Edit the source manually and rebuild.
+此单位在反编译模式下仅限 ROM。请手动编辑源码并重新构建。
+
+:This class is ROM-only in decomp mode. Edit the source manually and rebuild.
+此职业在反编译模式下仅限 ROM。请手动编辑源码并重新构建。
+
+:Unit source updated. Project needs rebuild.
+单位源码已更新。工程需要重新构建。
+
+:Class source updated. Project needs rebuild.
+职业源码已更新。工程需要重新构建。
+
+:This unit table is ROM-only in decomp mode.
+此单位表在反编译模式下仅限 ROM。
+
+:This class table is ROM-only in decomp mode.
+此职业表在反编译模式下仅限 ROM。
+
+:No change needed — the source already matches.
+无需更改——源码已经匹配。
+
+:Failed to open decomp project:
+打开反编译工程失败:

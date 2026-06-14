@@ -31,10 +31,13 @@
   -->
 
   <!-- BattleCanvasRender RESOLVED (#808): the TSA-composited main image is now rendered cross-platform via ImageTSAEditorCore.TryRenderMainImage into BattlePreview, with a read-only Export PNG button. Note: export is intentionally NOT byte-identical to the WF canvas for TSA tile indices >= 0x100 because the Core decoder uses the full 10-bit index (& 0x3FF) like ImageUtil.ByteToImage16Tile, whereas the WF TSA canvas masks tile numbers to 8 bits (& 0xff). The 10-bit value is the on-ROM truth, so this is acceptable for a read-only export. -->
-  <!-- KnownGap: ChipsetListRender reason=PATHCHIPLIST permuted chipset (orig + H flip + V flip + HV flip) requires the same WinForms ImageUtil.Copy + BitBlt pipeline; deferred consistent with PR #577 and PR #513. -->
-  <!-- KnownGap: TSAByteWrite reason=ImageFormRef.WriteImageData does pointer-aware reallocation when LZ77 recompressed TSA exceeds the original allocation; mirroring that requires the full WinForms write pipeline. Deferred; only the palette-write path is exercised by the Write button in this PR. -->
-  <!-- KnownGap: PaletteToClipboard reason=System.Windows.Forms.Clipboard interop is WinForms-only; Avalonia equivalent (TopLevel.Clipboard async API) is a separate cross-cutting refactor not in scope here. The Clipboard button (label クリップボード) renders as a disabled stub so the labels audit still passes. -->
-  <!-- KnownGap: MainImageImportExport reason=image1_Import / image1_Export call into ImageFormRef.ImportImageHandler / ExportImageHandler which depend on the full WinForms ImageFormRef ROM-write pipeline; deferred consistent with #513's BatchPng deferral. The Image Import / Image Export buttons (labels 画像読込 / 画像取出) render as disabled stubs so the labels audit still passes. -->
+  <!-- ChipsetListRender RESOLVED (#819): the chip-list thumbnail (WF MakeCHIPLIST / PATHCHIPLIST_Paint) is now rendered cross-platform via ImageTSAEditorCore.RenderChipList into ChipListPreview — the main-image tiles in WF's 4-column (orig / Hflip / Vflip / HVflip) single-palette-bank-0 strip, read-only. Follow-up to #808/#810 (shared TSA tile/palette loader) and #807 (the 8-col/2-bank battle-screen sibling). -->
+  <!-- RESOLVED (#1005): TSAByteWrite (NON-header TSA) — the TSA Cell tab adds a per-cell X/Y editor (Tile ID + H/V flip + palette bank) and the Write button now writes BOTH the edited TSA and the palette under ONE undo scope. Raw TSA is overwritten in place (same-size); LZ77 TSA is recompressed, appended to free space, and the pointer slot repointed (ImageTSAEditorCore.WriteTsaCells). -->
+  <!-- RESOLVED (#1071): HeaderTSACellWrite — header-TSA per-cell editing now uses the shared 32-wide bottom-to-top stride (ImageUtilCore.DecodeHeaderTSAToCells / SerializeHeaderTSA, the EXACT inverse). The cell-edit panel is ENABLED for a valid header decode; the Cell X/Y maxima are constrained in code-behind to the header region (HeaderMaxX / HeaderMaxY) so outside-header canvas cells are non-selectable. Write branches to ImageTSAEditorCore.WriteHeaderTsaCells preserving the original {masterHeaderX, masterHeaderY} (raw same-size in-place / LZ77 compress+repoint, byte-identical fault restore). -->
+  <!-- KnownGap: NONE — header-TSA editing is RESOLVED (#1071). -->
+  <!-- RESOLVED (#974): PaletteToClipboard — PaletteClipboard_Click now packs the 16 palette entries to GBA 5-5-5 big-endian hex (mirroring WF PaletteFormRef.PALETTE_TO_CLIPBOARD_BUTTON_Click) and copies to the system clipboard via the Avalonia IClipboard.SetTextAsync async API. See ImageTSAEditorViewModel.BuildPaletteClipboardHex + PaletteClipboard_Click. -->
+  <!-- RESOLVED (#901): MainImageImport — image1_Import is now wired (tilesheet-only). The WF TSA editor builds its main-image ImageFormRef with tsa_pointer=0 and only the ZIMAGE control, so Import encodes a SAME-SIZE PNG to plain 4bpp tiles (ImageToByte16Tile via ImageImportCore.EncodeDirectTiles4bpp), LZ77-compresses, and repoints ONLY the ZImg pointer — TSA + palette are untouched. See TSAImageImportCore.ImportTSAImage + MainImageImport_Click. -->
+  <!-- RESOLVED (#974): MainImageExport — MainImageExport_Click now renders the raw 4bpp tilesheet (LZ77-decompressed ZImg, 8-tile-wide strip) via ImageTSAEditorCore.RenderRawTilesheet and saves it to PNG via GbaImageControl.ExportPng. DISTINCT from the read-only TSA-composited Export PNG (#808, ImageTSAEditor_Battle_ExportPng_Button). See ImageTSAEditorViewModel.RenderRawTilesheet + MainImageExport_Click. -->
 
 
   <Grid ColumnDefinitions="250,*" RowDefinitions="Auto,*">
@@ -77,14 +80,12 @@
         <Button AutomationProperties.AutomationId="ImageTSAEditor_Undo_Button"
                 Name="UndoButton" Content="Undo" Click="Undo_Click"
                 Margin="12,0,0,0" />
-        <!-- Redo is explicitly inert: Core Undo currently exposes only RunUndo
-             (no RunRedo). The button stays disabled in the AXAML so the user
-             sees the unavailability immediately (Copilot review feedback).
-             Click handler kept for the View_AllButtons_AreWiredOrExplicitlyInert
-             audit and for the programmatic-info-dialog fallback. -->
+        <!-- Redo is WIRED (#974) to the global Core Undo stack
+             (CoreState.Undo.RunRedo() + CanRedo already exist). The handler
+             guards on CanRedo at runtime, so the button stays enabled like the
+             Undo button and the Map Style editor's Redo. -->
         <Button AutomationProperties.AutomationId="ImageTSAEditor_Redo_Button"
-                Name="RedoButton" Content="Redo" Click="Redo_Click"
-                IsEnabled="False" />
+                Name="RedoButton" Content="Redo" Click="Redo_Click" />
         <!-- Write is gated on IsContextLoaded - disabled until a caller Init's -->
         <Button AutomationProperties.AutomationId="ImageTSAEditor_Write_Button"
                 Name="WriteButton" Content="Write" Click="Write_Click"
@@ -98,7 +99,9 @@
       <controls:AddressListControl AutomationProperties.AutomationId="ImageTSAEditor_Entry_List"
                                    Grid.Row="0" Name="EntryList" />
       <Label Grid.Row="1" Content="Chipset Preview" Margin="0,4,0,0" />
-      <!-- Chipset thumbnail (CHIPLIST + PATHCHIPLIST_Paint) - KnownGap: ChipsetListRender -->
+      <!-- Chipset thumbnail (WF MakeCHIPLIST / PATHCHIPLIST_Paint) — RESOLVED (#819):
+           rendered via ImageTSAEditorCore.RenderChipList into ChipListPreview
+           on entry-load + after a successful write (see RefreshChipList). -->
       <Border Grid.Row="2" BorderBrush="DarkGray" BorderThickness="1" Margin="0,4,0,0">
         <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
           <controls:GbaImageControl AutomationProperties.AutomationId="ImageTSAEditor_ChipList_Image"
@@ -110,7 +113,7 @@
     <!-- ===== Row 1 Col 1: Battle canvas + TSAInfo + TabControl ===== -->
     <Grid Grid.Row="1" Grid.Column="1" RowDefinitions="*,Auto,Auto" Margin="4">
 
-      <!-- Battle canvas (TSA-rendered main image, #808). Render is read-only; TSA byte write stays KnownGap: TSAByteWrite. -->
+      <!-- Battle canvas (TSA-rendered main image, #808). For non-header TSA the preview tracks in-memory cell edits (#1005); header-TSA stays read-only. -->
       <Border Grid.Row="0" BorderBrush="DarkGray" BorderThickness="1" Margin="0,0,0,4">
         <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
           <controls:GbaImageControl AutomationProperties.AutomationId="ImageTSAEditor_Battle_Image"
@@ -148,11 +151,14 @@
                 <NumericUpDown AutomationProperties.AutomationId="ImageTSAEditor_PaletteAddress_Input"
                                FormatString="0" Name="PaletteAddressBox" Width="140"
                                Minimum="0" Maximum="4294967295" VerticalAlignment="Center" />
-                <!-- Clipboard button is an explicit IsEnabled=False stub - KnownGap: PaletteToClipboard.
-                     Click handler is wired so the inert-buttons audit test passes. -->
+                <!-- Clipboard button is WIRED (#974): packs the 16 palette
+                     entries to GBA 5-5-5 big-endian hex and copies to the
+                     system clipboard. Always enabled (reads the grid, never
+                     writes ROM). -->
                 <Button AutomationProperties.AutomationId="ImageTSAEditor_PaletteClipboard_Button"
                         Name="PaletteClipboardButton" Content="Clipboard"
-                        Click="PaletteClipboard_Click" IsEnabled="False"
+                        ToolTip.Tip="Copy the 16 palette entries to the clipboard as GBA 5-5-5 hex."
+                        Click="PaletteClipboard_Click"
                         Margin="12,0,0,0" />
                 <Button AutomationProperties.AutomationId="ImageTSAEditor_PaletteWrite_Button"
                         Name="PaletteWriteButton" Content="Palette Write"
@@ -389,14 +395,14 @@
               </Grid>
 
               <!-- Palette UNDO/REDO sub-buttons (mirrors WF UndoPlaetteButton/RedoPaletteButton).
-                   Redo is IsEnabled=False at the AXAML level (Core.Undo has no
-                   RunRedo yet); Copilot review feedback. -->
+                   Redo is WIRED (#974) to the global Core Undo stack via
+                   PaletteRedo_Click -> Redo_Click (guards on CanRedo). -->
               <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right">
                 <Button AutomationProperties.AutomationId="ImageTSAEditor_PaletteUndo_Button"
                         Name="PaletteUndoButton" Content="Undo" Click="PaletteUndo_Click" Width="130" />
                 <Button AutomationProperties.AutomationId="ImageTSAEditor_PaletteRedo_Button"
                         Name="PaletteRedoButton" Content="Redo" Click="PaletteRedo_Click"
-                        IsEnabled="False" Width="130" />
+                        Width="130" />
               </StackPanel>
 
             </StackPanel>
@@ -417,15 +423,22 @@
                              Minimum="0" Maximum="4294967295" VerticalAlignment="Center" />
             </StackPanel>
 
-            <!-- Import + Export buttons (mirrors WF image1_Import=画像読込 + image1_Export=画像取出).
-                 IsEnabled=False stubs - KnownGap: MainImageImportExport. -->
+            <!-- Import button (RESOLVED #901): mirrors WF image1_Import=画像読込 —
+                 tilesheet-only, repoints ONLY the ZImg pointer (TSA + palette
+                 untouched). Gated on IsContextLoaded.
+                 Export button (RESOLVED #974): mirrors WF image1_Export=画像取出 —
+                 the raw 4bpp tilesheet PNG (8-tile-wide strip), DISTINCT from the
+                 read-only TSA-composited Battle Export PNG (#808). Gated on
+                 IsContextLoaded. -->
             <StackPanel Orientation="Horizontal" Spacing="6">
               <Button AutomationProperties.AutomationId="ImageTSAEditor_MainImage_Import_Button"
                       Name="MainImageImportButton" Content="Image Import"
-                      Click="MainImageImport_Click" IsEnabled="False" Width="167" />
+                      ToolTip.Tip="Import a same-size image as the main tilesheet (palette and TSA are not changed)."
+                      Click="MainImageImport_Click" IsEnabled="{Binding IsContextLoaded}" Width="167" />
               <Button AutomationProperties.AutomationId="ImageTSAEditor_MainImage_Export_Button"
                       Name="MainImageExportButton" Content="Image Export"
-                      Click="MainImageExport_Click" IsEnabled="False" Width="167" />
+                      ToolTip.Tip="Export the raw main tilesheet (LZ77-decompressed 4bpp tiles) as a PNG."
+                      Click="MainImageExport_Click" IsEnabled="{Binding IsContextLoaded}" Width="167" />
             </StackPanel>
 
             <!-- Image preview area -->
@@ -433,6 +446,63 @@
               <controls:GbaImageControl AutomationProperties.AutomationId="ImageTSAEditor_MainImage_Image"
                                         Name="MainImagePreview" MinWidth="316" MinHeight="128" />
             </Border>
+
+          </StackPanel>
+        </TabItem>
+
+        <!-- TSA Cell tab (#1005 non-header / #1071 header): per-cell editor for
+             BOTH non-header AND header TSA. The whole panel is gated on
+             CanEditCells (a valid cell grid decoded). For header-TSA the Cell
+             X / Cell Y maxima are constrained in code-behind to the header
+             region (HeaderMaxX / HeaderMaxY) so cells outside the header region
+             are non-selectable / non-editable (not silently ignored). -->
+        <TabItem AutomationProperties.AutomationId="ImageTSAEditor_TsaCell_Tab" Header="TSA Cell">
+          <StackPanel Margin="6" Spacing="6" IsEnabled="{Binding CanEditCells}">
+
+            <!-- Cell X / Cell Y selectors -->
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Label Content="Cell X" VerticalAlignment="Center" Width="80"
+                     HorizontalContentAlignment="Right" />
+              <NumericUpDown AutomationProperties.AutomationId="ImageTSAEditor_TsaCellX_Input"
+                             FormatString="0" Name="TsaCellXBox" Width="100"
+                             Minimum="0" Maximum="0" VerticalAlignment="Center" />
+              <Label Content="Cell Y" VerticalAlignment="Center" Width="80"
+                     HorizontalContentAlignment="Right" Margin="12,0,0,0" />
+              <NumericUpDown AutomationProperties.AutomationId="ImageTSAEditor_TsaCellY_Input"
+                             FormatString="0" Name="TsaCellYBox" Width="100"
+                             Minimum="0" Maximum="0" VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Tile ID -->
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Label Content="Tile ID" VerticalAlignment="Center" Width="80"
+                     HorizontalContentAlignment="Right" />
+              <NumericUpDown AutomationProperties.AutomationId="ImageTSAEditor_TsaCellTileId_Input"
+                             FormatString="0" Name="TsaCellTileIdBox" Width="100"
+                             Minimum="0" Maximum="1023" VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Flip flags -->
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <CheckBox AutomationProperties.AutomationId="ImageTSAEditor_TsaCellHFlip_Check"
+                        Name="TsaCellHFlipCheck" Content="H-Flip" />
+              <CheckBox AutomationProperties.AutomationId="ImageTSAEditor_TsaCellVFlip_Check"
+                        Name="TsaCellVFlipCheck" Content="V-Flip" />
+            </StackPanel>
+
+            <!-- Palette Bank -->
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Label Content="Palette Bank" VerticalAlignment="Center" Width="80"
+                     HorizontalContentAlignment="Right" />
+              <NumericUpDown AutomationProperties.AutomationId="ImageTSAEditor_TsaCellBank_Input"
+                             FormatString="0" Name="TsaCellBankBox" Width="100"
+                             Minimum="0" Maximum="15" VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Apply to Cell -->
+            <Button AutomationProperties.AutomationId="ImageTSAEditor_TsaCellApply_Button"
+                    Name="TsaCellApplyButton" Content="Apply to Cell"
+                    Click="TsaCellApply_Click" HorizontalAlignment="Left" />
 
           </StackPanel>
         </TabItem>

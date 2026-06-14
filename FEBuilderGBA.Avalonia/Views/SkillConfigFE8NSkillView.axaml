@@ -69,11 +69,16 @@
         <Label DockPanel.Dock="Top"
                AutomationProperties.AutomationId="SkillConfigFE8NSkill_FilterName_Label"
                Content="Filter Name" HorizontalAlignment="Stretch" />
-        <Button DockPanel.Dock="Bottom"
-                AutomationProperties.AutomationId="SkillConfigFE8NSkill_ListExpand_Button"
-                Name="ListExpandButton" Content="List Expand"
-                HorizontalAlignment="Stretch" Click="ListExpand_Click"
-                ToolTip.Tip="Pending Core extraction - tracked by #500." />
+        <!-- #997: List expansion is not yet implemented for the skill-config tables
+             (multi-table / multi-pointer per patch variant). The button is disabled
+             with the explanation on this ENABLED Border, since a disabled Avalonia
+             control won't surface its own tooltip on hover. -->
+        <Border DockPanel.Dock="Bottom"
+                ToolTip.Tip="List expansion is not yet implemented for the skill-config tables (multi-table / multi-pointer per patch variant).">
+          <Button AutomationProperties.AutomationId="SkillConfigFE8NSkill_ListExpand_Button"
+                  Name="ListExpandButton" Content="List Expand"
+                  HorizontalAlignment="Stretch" IsEnabled="False" />
+        </Border>
         <controls:AddressListControl
             AutomationProperties.AutomationId="SkillConfigFE8NSkill_Entry_List"
             Name="EntryList" />
@@ -113,13 +118,15 @@
               <Button Grid.Column="2"
                       AutomationProperties.AutomationId="SkillConfigFE8NSkill_ImageImport_Button"
                       Name="ImageImportButton" Content="Image Import" Margin="8,0,0,0"
+                      IsEnabled="False"
                       Click="ImageImport_Click"
-                      ToolTip.Tip="Pending Core extraction - tracked by #500." />
+                      ToolTip.Tip="FE8N Ver1 has no icon import/export — WinForms SkillConfigFE8NSkillForm is render-only, and this variant's icon address lacks the 0x100 page offset v2/v3 use. Disabled by design (#1008)." />
               <Button Grid.Column="3"
                       AutomationProperties.AutomationId="SkillConfigFE8NSkill_ImageExport_Button"
                       Name="ImageExportButton" Content="Image Export" Margin="8,0,0,0"
+                      IsEnabled="False"
                       Click="ImageExport_Click"
-                      ToolTip.Tip="Pending Core extraction - tracked by #500." />
+                      ToolTip.Tip="FE8N Ver1 has no icon import/export — WinForms SkillConfigFE8NSkillForm is render-only, and this variant's icon address lacks the 0x100 page offset v2/v3 use. Disabled by design (#1008)." />
               <Label Grid.Column="4"
                      AutomationProperties.AutomationId="SkillConfigFE8NSkill_IconAddr_Label"
                      Name="IconAddrLabel" VerticalAlignment="Center" Margin="12,0,0,0"
@@ -265,13 +272,15 @@
               <Button Grid.Column="2"
                       AutomationProperties.AutomationId="SkillConfigFE8NSkill_AnimationImport_Button"
                       Name="AnimationImportButton" Content="Animation Import" Margin="8,0,0,0"
+                      IsEnabled="False"
                       Click="AnimationImport_Click"
-                      ToolTip.Tip="Pending Core extraction - tracked by #500." />
+                      ToolTip.Tip="FE8N Ver1 has no animation pointer or animation I/O in WinForms (render-only). Disabled by design (#1008)." />
               <Button Grid.Column="3"
                       AutomationProperties.AutomationId="SkillConfigFE8NSkill_AnimationExport_Button"
                       Name="AnimationExportButton" Content="Animation Export" Margin="8,0,0,0"
+                      IsEnabled="False"
                       Click="AnimationExport_Click"
-                      ToolTip.Tip="Pending Core extraction - tracked by #500." />
+                      ToolTip.Tip="FE8N Ver1 has no animation pointer or animation I/O in WinForms (render-only). Disabled by design (#1008)." />
               <Button Grid.Column="4"
                       AutomationProperties.AutomationId="SkillConfigFE8NSkill_JumpToEditor_Button"
                       Name="JumpToEditorButton" Content="Editor" Margin="8,0,0,0"
@@ -515,13 +524,13 @@
             <StackPanel Spacing="8">
               <TextBlock TextWrapping="Wrap"
                          AutomationProperties.AutomationId="SkillConfigFE8NSkill_ClassTab_StatusL1_Label"
-                         Text="Per-skill class sub-list editing is not yet implemented in Avalonia." />
+                         Text="The FE8N Ver1 Class/Item/Other tabs are the SAME shared 16 ext-bytes (B16..B31) already edited on the Unit tab — not a separate per-skill array." />
               <TextBlock TextWrapping="Wrap"
                          AutomationProperties.AutomationId="SkillConfigFE8NSkill_ClassTab_StatusL2_Label"
-                         Text="Use the WinForms editor to assign classes to a skill." />
+                         Text="WinForms shows them as 4 tabs of the same 16 bytes; Avalonia surfaces all 16 editable on the Unit tab. Edit them there (#930)." />
               <TextBlock TextWrapping="Wrap"
                          AutomationProperties.AutomationId="SkillConfigFE8NSkill_ClassTab_StatusL3_Label"
-                         Text="KnownGap: depends on InputFormRef auto-wiring (tracked by #374)." />
+                         Text="The editable per-skill sub-list arrays live in FE8N Ver2/Ver3 (Unit/Class/Item/Item2/Composite), not Ver1." />
             </StackPanel>
           </Border>
           <Label AutomationProperties.AutomationId="SkillConfigFE8NSkill_ClassTab_BaseAddr_Label"
@@ -542,13 +551,13 @@
             <StackPanel Spacing="8">
               <TextBlock TextWrapping="Wrap"
                          AutomationProperties.AutomationId="SkillConfigFE8NSkill_ItemTab_StatusL1_Label"
-                         Text="Per-skill item sub-list editing is not yet implemented in Avalonia." />
+                         Text="The FE8N Ver1 Class/Item/Other tabs are the SAME shared 16 ext-bytes (B16..B31) already edited on the Unit tab — not a separate per-skill array." />
               <TextBlock TextWrapping="Wrap"
                          AutomationProperties.AutomationId="SkillConfigFE8NSkill_ItemTab_StatusL2_Label"
-                         Text="Use the WinForms editor to assign items to a skill." />
+                         Text="WinForms shows them as 4 tabs of the same 16 bytes; Avalonia surfaces all 16 editable on the Unit tab. Edit them there (#930)." />
               <TextBlock TextWrapping="Wrap"
                          AutomationProperties.AutomationId="SkillConfigFE8NSkill_ItemTab_StatusL3_Label"
-                         Text="KnownGap: depends on InputFormRef auto-wiring (tracked by #374)." />
+                         Text="The editable per-skill sub-list arrays live in FE8N Ver2/Ver3 (Unit/Class/Item/Item2/Composite), not Ver1." />
             </StackPanel>
           </Border>
           <Label AutomationProperties.AutomationId="SkillConfigFE8NSkill_ItemTab_BaseAddr_Label"
@@ -569,13 +578,13 @@
             <StackPanel Spacing="8">
               <TextBlock TextWrapping="Wrap"
                          AutomationProperties.AutomationId="SkillConfigFE8NSkill_OtherTab_StatusL1_Label"
-                         Text="Per-skill 'other' sub-list editing is not yet implemented in Avalonia." />
+                         Text="The FE8N Ver1 Class/Item/Other tabs are the SAME shared 16 ext-bytes (B16..B31) already edited on the Unit tab — not a separate per-skill array." />
               <TextBlock TextWrapping="Wrap"
                          AutomationProperties.AutomationId="SkillConfigFE8NSkill_OtherTab_StatusL2_Label"
-                         Text="The N03 sub-tab in WF holds 16 generic bytes (B16..B31) with no fixed semantics; the WF UI exposes them as unlabeled NumericUpDowns. The Avalonia view surfaces the base address so power users can drop down to the hex editor." />
+                         Text="The N03 sub-tab in WF holds 16 generic bytes (B16..B31) with no fixed semantics, shown there as unlabeled NumericUpDowns. Avalonia surfaces all 16 editable on the Unit tab; edit them there (#930)." />
               <TextBlock TextWrapping="Wrap"
                          AutomationProperties.AutomationId="SkillConfigFE8NSkill_OtherTab_StatusL3_Label"
-                         Text="KnownGap: depends on InputFormRef auto-wiring (tracked by #374)." />
+                         Text="The editable per-skill sub-list arrays live in FE8N Ver2/Ver3 (Unit/Class/Item/Item2/Composite), not Ver1." />
             </StackPanel>
           </Border>
           <Label AutomationProperties.AutomationId="SkillConfigFE8NSkill_OtherTab_BaseAddr_Label"

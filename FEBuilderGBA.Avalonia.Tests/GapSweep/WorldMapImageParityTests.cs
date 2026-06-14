@@ -220,33 +220,75 @@ public class WorldMapImageParityTests
     }
 
     /// <summary>
-    /// Deferred affordances (image import/export, dark-map import/export,
-    /// decrease-color tool, open-source, select-source) must be disabled
-    /// and reference KnownGap in the tooltip. No follow-up issues per task
-    /// scope discipline.
+    /// Deferred affordances must be disabled and reference KnownGap in the
+    /// tooltip. After #1064 PR1 only ONE remains deferred: the Border image
+    /// IMPORT (OAM assembly, PR 2). The Event image IMPORT and the legacy Main
+    /// full-image EXPORT are now wired (#1064 PR1, see
+    /// <see cref="View_EventImportAndLegacyMainExport_AreWired"/>). The four
+    /// single-LZ77-stream strip imports (Mini / Point1 / Point2 / Road) were
+    /// wired in #1000 (<see cref="View_StripImportButtons_AreWired"/>). No
+    /// follow-up issues per task scope discipline.
+    ///
+    /// NOTE the Main tab keeps a DISTINCT pair of EXPORT buttons: the legacy full
+    /// image EXPORT (<c>WorldMapImage_Main_Export_Button</c>) is now wired (#1064
+    /// PR1) to the SAME read-only export path as the read-only
+    /// <c>WorldMapImage_Main_ExportPng_Button</c> (#846 NV5b) — both
+    /// CanExportMain-gated.
+    ///
+    /// NOTE (#843 NV5a / #846 NV5b / #849 NV5c): the read-only EXPORT PNG buttons
+    /// (Main / Event / Mini / Point1 / Point2 / Road, and the Border Export PNG)
+    /// are NOT deferred — they are working CanExport*-gated buttons. The Border
+    /// EXPORT PNG (<c>WorldMapImage_Border_Export_Button</c>) is now functional
+    /// (#849 NV5c) and is asserted by
+    /// <see cref="View_ReuseExportButton_IsBindingGatedReadOnlyExport"/>.
+    ///
+    /// As of #1064 PR2 (closes #1064 + #1000), the Border image IMPORT
+    /// (<c>WorldMapImage_Border_Import_Button</c>) is also wired — NO World Map
+    /// Image button stays KnownGap-deferred. See <see cref="View_BorderImport_IsWired"/>.
+    /// </summary>
+    [Fact]
+    public void View_BorderImport_IsWired()
+    {
+        string axaml = ReadAxaml();
+
+        // --- Border Import button: gated by CanImportBorder, wired to the click
+        //     handler, NOT a KnownGap-disabled stub. ---
+        string borderBtn = ElementFor(axaml, "WorldMapImage_Border_Import_Button");
+        Assert.Contains("IsEnabled=\"{Binding CanImportBorder}\"", borderBtn);
+        Assert.Contains("Click=\"BorderImport_Click\"", borderBtn);
+        Assert.DoesNotContain("IsEnabled=\"False\"", borderBtn);
+        Assert.DoesNotContain("KnownGap", borderBtn);
+
+        // --- Code-behind: DoBorderImport resolves the _NAME companion, remaps both
+        //     sheets onto the EXISTING palette, and routes through the VM driver
+        //     under one undo scope. ---
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        Assert.Contains("BorderImport_Click", source);
+        string driverBody = MethodBody(source, "Task DoBorderImport(");
+        Assert.True(driverBody.Length > 0, "DoBorderImport driver not found in code-behind");
+        Assert.Contains("_NAME", driverBody);
+        Assert.Contains("TryGetStripPalette", driverBody);          // existing palette read
+        Assert.Contains("LoadAndRemapFromFile", driverBody);        // remap onto existing palette
+        Assert.Contains("_vm.ImportBorder(", driverBody);
+        Assert.Contains("_undoService.Begin(\"Import World Map Border\")", driverBody);
+
+        // --- VM: ImportBorder driver routes through the Core seam + gate. ---
+        string vm = File.ReadAllText(ViewModelPath());
+        Assert.Contains("ImageWorldMapCore.ImportBorder", vm);
+        Assert.Contains("CanImportBorder", vm);
+    }
+
+    /// <summary>
+    /// #1013: the Main + Event Decrease-Color Tool buttons are now wired
+    /// (previously KnownGap-disabled). Each must NOT be IsEnabled="False",
+    /// NOT reference KnownGap, and have a Click handler wired to the
+    /// corresponding code-behind handler (which opens DecreaseColorTSAToolView
+    /// + InitMethod 3/4).
     /// </summary>
     [Theory]
-    [InlineData("WorldMapImage_Main_Import_Button")]
-    [InlineData("WorldMapImage_Main_Export_Button")]
-    [InlineData("WorldMapImage_Main_DarkImport_Button")]
-    [InlineData("WorldMapImage_Main_DarkExport_Button")]
-    [InlineData("WorldMapImage_Main_DecreaseColor_Button")]
-    [InlineData("WorldMapImage_Main_OpenSource_Button")]
-    [InlineData("WorldMapImage_Main_SelectSource_Button")]
-    [InlineData("WorldMapImage_Event_Import_Button")]
-    [InlineData("WorldMapImage_Event_Export_Button")]
-    [InlineData("WorldMapImage_Event_DecreaseColor_Button")]
-    [InlineData("WorldMapImage_Mini_Import_Button")]
-    [InlineData("WorldMapImage_Mini_Export_Button")]
-    [InlineData("WorldMapImage_PointIcon_Point1Import_Button")]
-    [InlineData("WorldMapImage_PointIcon_Point1Export_Button")]
-    [InlineData("WorldMapImage_PointIcon_Point2Import_Button")]
-    [InlineData("WorldMapImage_PointIcon_Point2Export_Button")]
-    [InlineData("WorldMapImage_PointIcon_RoadImport_Button")]
-    [InlineData("WorldMapImage_PointIcon_RoadExport_Button")]
-    [InlineData("WorldMapImage_Border_Import_Button")]
-    [InlineData("WorldMapImage_Border_Export_Button")]
-    public void View_DeferredButton_IsDisabledAndReferencesKnownGap(string automationId)
+    [InlineData("WorldMapImage_Main_DecreaseColor_Button", "MainDecreaseColor_Click", "InitMethod(3)")]
+    [InlineData("WorldMapImage_Event_DecreaseColor_Button", "EventDecreaseColor_Click", "InitMethod(4)")]
+    public void View_DecreaseColorButtons_AreWired(string automationId, string clickHandler, string initMethod)
     {
         string axaml = ReadAxaml();
         int idx = axaml.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
@@ -258,8 +300,304 @@ public class WorldMapImageParityTests
         Assert.True(elementEnd > elementStart);
         string element = axaml.Substring(elementStart, elementEnd - elementStart + 1);
 
-        Assert.Contains("IsEnabled=\"False\"", element);
-        Assert.Contains("KnownGap", element);
+        Assert.Contains($"Click=\"{clickHandler}\"", element);
+        Assert.DoesNotContain("IsEnabled=\"False\"", element);
+        Assert.DoesNotContain("KnownGap", element);
+
+        // The click handler exists in the code-behind and routes through
+        // DecreaseColorTSAToolView with the correct InitMethod index.
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        Assert.Contains(clickHandler, source);
+        Assert.Contains("DecreaseColorTSAToolView", source);
+        Assert.Contains(initMethod, source);
+    }
+
+    /// <summary>
+    /// #1013: the Main Open Source File / Open Source Folder buttons are now
+    /// wired (previously KnownGap-disabled). Each must NOT be IsEnabled="False",
+    /// NOT reference KnownGap, be gated visible via
+    /// IsVisible="{Binding IsSourceFileAvailable}", and have a Click handler.
+    /// </summary>
+    [Theory]
+    [InlineData("WorldMapImage_Main_OpenSource_Button", "OpenSource_Click")]
+    [InlineData("WorldMapImage_Main_SelectSource_Button", "SelectSource_Click")]
+    public void View_SourceFileButtons_AreWired(string automationId, string clickHandler)
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
+        Assert.True(idx >= 0, $"AutomationId {automationId} not found in AXAML");
+
+        int elementStart = axaml.LastIndexOf('<', idx);
+        Assert.True(elementStart >= 0);
+        int elementEnd = FindElementEnd(axaml, elementStart);
+        Assert.True(elementEnd > elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 1);
+
+        Assert.Contains($"Click=\"{clickHandler}\"", element);
+        Assert.Contains("IsVisible=\"{Binding IsSourceFileAvailable}\"", element);
+        Assert.DoesNotContain("IsEnabled=\"False\"", element);
+        Assert.DoesNotContain("KnownGap", element);
+
+        // The click handler exists in the code-behind.
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        Assert.Contains(clickHandler, source);
+    }
+
+    /// <summary>
+    /// #1013: the main-import driver records the imported source-file path so
+    /// the Open Source File / Folder buttons become available. The dark-import
+    /// driver must NOT record one (WF dark import never updates ResourceCache).
+    /// </summary>
+    [Fact]
+    public void View_MainImportRecordsSource_DarkImportDoesNot()
+    {
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        int mainIdx = source.IndexOf("DoMainImport", StringComparison.Ordinal);
+        Assert.True(mainIdx > 0);
+        int darkIdx = source.IndexOf("DoDarkImport", StringComparison.Ordinal);
+        Assert.True(darkIdx > 0);
+        // RecordSourceFile is called somewhere (main import path).
+        Assert.Contains("_vm.RecordSourceFile(imagePath)", source);
+        // The dark-import method body must NOT call RecordSourceFile. Find the
+        // public DoDarkImport task body and confirm it has no RecordSourceFile.
+        int darkBodyStart = source.IndexOf("public async System.Threading.Tasks.Task DoDarkImport", StringComparison.Ordinal);
+        Assert.True(darkBodyStart > 0);
+        // Scan to the next "public " method declaration after DoDarkImport.
+        int nextPublic = source.IndexOf("\n        public ", darkBodyStart + 10, StringComparison.Ordinal);
+        if (nextPublic < 0) nextPublic = source.Length;
+        string darkBody = source.Substring(darkBodyStart, nextPublic - darkBodyStart);
+        Assert.DoesNotContain("RecordSourceFile", darkBody);
+    }
+
+    /// <summary>
+    /// #875: Main Import, Dark Import, and Dark Export buttons are now wired
+    /// (previously KnownGap-disabled). Each must:
+    ///   * NOT be IsEnabled="False",
+    ///   * NOT reference KnownGap in its tooltip,
+    ///   * have an IsEnabled binding (CanImportMain / CanImportDark / CanExportDark), and
+    ///   * have a Click handler wired.
+    /// DecreaseColor + OpenSource + SelectSource STAY KnownGap-disabled (not wired).
+    /// </summary>
+    [Theory]
+    [InlineData("WorldMapImage_Main_Import_Button",     "CanImportMain", "MainImport_Click")]
+    [InlineData("WorldMapImage_Main_DarkImport_Button", "CanImportDark", "DarkImport_Click")]
+    [InlineData("WorldMapImage_Main_DarkExport_Button", "CanExportDark", "DarkExport_Click")]
+    public void View_ImportDarkButtons_AreWired(string automationId, string binding, string clickHandler)
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
+        Assert.True(idx >= 0, $"AutomationId {automationId} not found in AXAML");
+
+        int elementStart = axaml.LastIndexOf('<', idx);
+        Assert.True(elementStart >= 0);
+        int elementEnd = FindElementEnd(axaml, elementStart);
+        Assert.True(elementEnd > elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 1);
+
+        // Wired button: gated by binding, wired to click handler, NOT a KnownGap stub.
+        Assert.Contains($"IsEnabled=\"{{Binding {binding}}}\"", element);
+        Assert.Contains($"Click=\"{clickHandler}\"", element);
+        Assert.DoesNotContain("IsEnabled=\"False\"", element);
+        Assert.DoesNotContain("KnownGap", element);
+
+        // Click handler exists in the code-behind.
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        Assert.Contains(clickHandler, source);
+    }
+
+    /// <summary>
+    /// #1000: the four single-LZ77-stream strip Import buttons (Mini / Point1 /
+    /// Point2 / Road) are now wired (previously KnownGap-disabled). Each must:
+    ///   * be gated by its CanImport* binding,
+    ///   * have a Click handler wired,
+    ///   * NOT be IsEnabled="False" and NOT reference KnownGap, and
+    ///   * route through ImageWorldMapCore.ImportIconStrip + RefreshPreviews in
+    ///     the code-behind.
+    /// </summary>
+    [Theory]
+    [InlineData("WorldMapImage_Mini_Import_Button",            "CanImportMini",   "MiniImport_Click")]
+    [InlineData("WorldMapImage_PointIcon_Point1Import_Button", "CanImportPoint1", "Point1Import_Click")]
+    [InlineData("WorldMapImage_PointIcon_Point2Import_Button", "CanImportPoint2", "Point2Import_Click")]
+    [InlineData("WorldMapImage_PointIcon_RoadImport_Button",   "CanImportRoad",   "RoadImport_Click")]
+    public void View_StripImportButtons_AreWired(string automationId, string binding, string clickHandler)
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
+        Assert.True(idx >= 0, $"AutomationId {automationId} not found in AXAML");
+
+        int elementStart = axaml.LastIndexOf('<', idx);
+        Assert.True(elementStart >= 0);
+        int elementEnd = FindElementEnd(axaml, elementStart);
+        Assert.True(elementEnd > elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 1);
+
+        // Wired button: gated by binding, wired to click handler, NOT a KnownGap stub.
+        Assert.Contains($"IsEnabled=\"{{Binding {binding}}}\"", element);
+        Assert.Contains($"Click=\"{clickHandler}\"", element);
+        Assert.DoesNotContain("IsEnabled=\"False\"", element);
+        Assert.DoesNotContain("KnownGap", element);
+
+        // Scope the wiring assertions to the SPECIFIC handler (not the whole
+        // file, which would false-positive if any unrelated method contained the
+        // strings while this handler was broken). Each strip handler is an
+        // expression-bodied delegation to the shared DoStripImport driver, and
+        // that driver is what routes through the Core seam + refreshes previews.
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        string handlerBody = ExpressionBody(source, $"void {clickHandler}(");
+        Assert.True(handlerBody.Length > 0, $"{clickHandler} not found in code-behind");
+        Assert.Contains("DoStripImport", handlerBody);
+
+        string driverBody = MethodBody(source, "Task DoStripImport(");
+        Assert.True(driverBody.Length > 0, "DoStripImport driver not found in code-behind");
+        Assert.Contains("ImageWorldMapCore.ImportIconStrip", driverBody);
+        Assert.Contains("RefreshPreviews()", driverBody);
+    }
+
+    /// <summary>
+    /// #1064 PR1: the Event two-stream image IMPORT and the legacy Main full-image
+    /// EXPORT are now wired (previously KnownGap-disabled). Asserts:
+    ///   * Event Import gated by CanImportEvent + Click=EventImport_Click, not a
+    ///     KnownGap stub; the code-behind DoEventImport routes through the VM
+    ///     ImportEvent driver under one undo scope + RefreshPreviews.
+    ///   * Legacy Main Export gated by CanExportMain + Click=MainExport_Click
+    ///     (same read-only export path as Export PNG), not a KnownGap stub.
+    ///   * The VM ImportEvent driver routes through ImageWorldMapCore.ImportEvent.
+    /// </summary>
+    [Fact]
+    public void View_EventImportAndLegacyMainExport_AreWired()
+    {
+        string axaml = ReadAxaml();
+
+        // --- Event Import button ---
+        string eventBtn = ElementFor(axaml, "WorldMapImage_Event_Import_Button");
+        Assert.Contains("IsEnabled=\"{Binding CanImportEvent}\"", eventBtn);
+        Assert.Contains("Click=\"EventImport_Click\"", eventBtn);
+        Assert.DoesNotContain("IsEnabled=\"False\"", eventBtn);
+        Assert.DoesNotContain("KnownGap", eventBtn);
+
+        // --- Legacy Main Export button (wired to the read-only export path) ---
+        string mainExportBtn = ElementFor(axaml, "WorldMapImage_Main_Export_Button");
+        Assert.Contains("IsEnabled=\"{Binding CanExportMain}\"", mainExportBtn);
+        Assert.Contains("Click=\"MainExport_Click\"", mainExportBtn);
+        Assert.DoesNotContain("IsEnabled=\"False\"", mainExportBtn);
+        Assert.DoesNotContain("KnownGap", mainExportBtn);
+
+        // --- Code-behind: DoEventImport routes through the VM driver + refresh. ---
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        Assert.Contains("EventImport_Click", source);
+        string driverBody = MethodBody(source, "Task DoEventImport(");
+        Assert.True(driverBody.Length > 0, "DoEventImport driver not found in code-behind");
+        Assert.Contains("_vm.ImportEvent(", driverBody);
+        Assert.Contains("_undoService.Begin(\"Import World Map Event Image\")", driverBody);
+        Assert.Contains("RefreshPreviews()", driverBody);
+
+        // --- VM: ImportEvent driver routes through the Core seam. ---
+        string vm = File.ReadAllText(ViewModelPath());
+        Assert.Contains("ImageWorldMapCore.ImportEvent", vm);
+        Assert.Contains("CanImportEvent", vm);
+    }
+
+    /// <summary>Extract the full AXAML element containing the given AutomationId.</summary>
+    static string ElementFor(string axaml, string automationId)
+    {
+        int idx = axaml.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
+        Assert.True(idx >= 0, $"AutomationId {automationId} not found in AXAML");
+        int elementStart = axaml.LastIndexOf('<', idx);
+        Assert.True(elementStart >= 0);
+        int elementEnd = FindElementEnd(axaml, elementStart);
+        Assert.True(elementEnd > elementStart);
+        return axaml.Substring(elementStart, elementEnd - elementStart + 1);
+    }
+
+    /// <summary>
+    /// #843 NV5a + #846 NV5b + #849 NV5c: the read-only preview EXPORT PNG buttons
+    /// are working buttons — gated by a CanExport* binding (set true only after a
+    /// successful render) and wired to an Export click handler. They must NOT be
+    /// IsEnabled="False" and must NOT reference KnownGap. As of #849 the BORDER
+    /// EXPORT PNG joins the six reuse-based exports.
+    /// </summary>
+    [Theory]
+    [InlineData("WorldMapImage_Main_ExportPng_Button", "CanExportMain", "MainExport_Click")]
+    [InlineData("WorldMapImage_Event_Export_Button", "CanExportEvent", "EventExport_Click")]
+    [InlineData("WorldMapImage_Mini_Export_Button", "CanExportMini", "MiniExport_Click")]
+    [InlineData("WorldMapImage_PointIcon_Point1Export_Button", "CanExportPoint1", "Point1Export_Click")]
+    [InlineData("WorldMapImage_PointIcon_Point2Export_Button", "CanExportPoint2", "Point2Export_Click")]
+    [InlineData("WorldMapImage_PointIcon_RoadExport_Button", "CanExportRoad", "RoadExport_Click")]
+    [InlineData("WorldMapImage_Border_Export_Button", "CanExportBorder", "BorderExport_Click")]
+    public void View_ReuseExportButton_IsBindingGatedReadOnlyExport(
+        string automationId, string canExportBinding, string clickHandler)
+    {
+        string axaml = ReadAxaml();
+        int idx = axaml.IndexOf($"AutomationId=\"{automationId}\"", StringComparison.Ordinal);
+        Assert.True(idx >= 0, $"AutomationId {automationId} not found in AXAML");
+
+        int elementStart = axaml.LastIndexOf('<', idx);
+        Assert.True(elementStart >= 0);
+        int elementEnd = FindElementEnd(axaml, elementStart);
+        Assert.True(elementEnd > elementStart);
+        string element = axaml.Substring(elementStart, elementEnd - elementStart + 1);
+
+        // Working read-only export: gated by the CanExport* binding, wired to
+        // the export click handler, and NOT a deferred KnownGap stub.
+        Assert.Contains($"IsEnabled=\"{{Binding {canExportBinding}}}\"", element);
+        Assert.Contains($"Click=\"{clickHandler}\"", element);
+        Assert.DoesNotContain("IsEnabled=\"False\"", element);
+        Assert.DoesNotContain("KnownGap", element);
+
+        // The click handler exists in the code-behind and routes through the
+        // shared GbaImageControl ExportPng helper.
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        Assert.Contains(clickHandler, source);
+    }
+
+    /// <summary>
+    /// #843 NV5a + #846 NV5b + #849 NV5c: the live previews must render via
+    /// ImageWorldMapCore (resolve + decode) into a GbaImageControl. As of #849
+    /// the BORDER DRAW SAMPLE (NV5c, via TryRenderBorder) joins the six
+    /// reuse-based previews (main / event / mini / point1 / point2 / road) —
+    /// all seven are now GbaImageControls. No deferred &lt;Image&gt; placeholders remain.
+    /// </summary>
+    [Fact]
+    public void View_ReusePreviews_AreGbaImageControlsAndCoreWired()
+    {
+        string axaml = ReadAxaml();
+
+        // The seven live previews are GbaImageControl (not <Image>): the five
+        // reuse-based (#843) + the main field map (#846 NV5b) + the border
+        // draw sample (#849 NV5c — now implemented via TryRenderBorder).
+        foreach (string id in new[]
+        {
+            "WorldMapImage_Main_Preview_Image",
+            "WorldMapImage_Event_Preview_Image",
+            "WorldMapImage_Mini_Preview_Image",
+            "WorldMapImage_PointIcon_Point1Preview_Image",
+            "WorldMapImage_PointIcon_Point2Preview_Image",
+            "WorldMapImage_PointIcon_RoadPreview_Image",
+            "WorldMapImage_Border_DrawSample_Image",
+        })
+        {
+            int idx = axaml.IndexOf($"AutomationId=\"{id}\"", StringComparison.Ordinal);
+            Assert.True(idx >= 0, $"AutomationId {id} not found");
+            int elementStart = axaml.LastIndexOf('<', idx);
+            string head = axaml.Substring(elementStart, idx - elementStart);
+            Assert.Contains("controls:GbaImageControl", head);
+        }
+
+
+
+        // The view renders the previews through the Core helper.
+        string source = File.ReadAllText(ViewCodeBehindPath());
+        Assert.Contains("RefreshPreviews", source);
+        string vm = File.ReadAllText(ViewModelPath());
+        // #846 NV5b — the new FE8-only main field-map primitive.
+        Assert.Contains("ImageWorldMapCore.TryRenderMainFieldMap", vm);
+        Assert.Contains("ImageWorldMapCore.TryRenderEvent", vm);
+        Assert.Contains("ImageWorldMapCore.TryRenderMini", vm);
+        Assert.Contains("ImageWorldMapCore.TryRenderPoint1", vm);
+        Assert.Contains("ImageWorldMapCore.TryRenderPoint2", vm);
+        Assert.Contains("ImageWorldMapCore.TryRenderRoad", vm);
+        // #849 NV5c — the border draw sample via TryRenderBorder.
+        Assert.Contains("ImageWorldMapCore.TryRenderBorder", vm);
     }
 
     // ===================================================================
@@ -809,9 +1147,89 @@ public class WorldMapImageParityTests
         finally { CoreState.ROM = prev; }
     }
 
+    /// <summary>
+    /// #1013: RecordSourceFile writes the path under the fixed WF "WorldMap_"
+    /// ResourceCache key and sets IsSourceFileAvailable based on File.Exists;
+    /// RefreshSourceFile reads the same value back. A non-existent path leaves
+    /// IsSourceFileAvailable false (but SourceFilePath is still set).
+    /// </summary>
+    [Fact]
+    public void ViewModel_RecordAndRefreshSourceFile_RoundTripsViaResourceCache()
+    {
+        EnsureCoreStateBaseDirectory();
+        var prevRes = CoreState.ResourceCache;
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            var cache = new FEBuilderGBA.EtcCacheResource();
+            CoreState.ResourceCache = cache;
+
+            var vm = new WorldMapImageViewModel();
+
+            // Record a REAL temp file → available + path set.
+            vm.RecordSourceFile(tempFile);
+            Assert.Equal(tempFile, vm.SourceFilePath);
+            Assert.True(vm.IsSourceFileAvailable);
+
+            // Refresh reads the SAME value back from the "WorldMap_" key.
+            vm.SourceFilePath = string.Empty;
+            vm.IsSourceFileAvailable = false;
+            vm.RefreshSourceFile();
+            Assert.Equal(tempFile, vm.SourceFilePath);
+            Assert.True(vm.IsSourceFileAvailable);
+
+            // The fixed WF key is used (not per-index).
+            Assert.Equal(tempFile, cache.At("WorldMap_", string.Empty));
+
+            // A non-existent path → SourceFilePath set, but not available.
+            string missing = Path.Combine(Path.GetTempPath(), "nope_worldmap_xyz.png");
+            vm.RecordSourceFile(missing);
+            Assert.Equal(missing, vm.SourceFilePath);
+            Assert.False(vm.IsSourceFileAvailable);
+        }
+        finally
+        {
+            CoreState.ResourceCache = prevRes;
+            try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    /// <summary>
+    /// #1013: with no ResourceCache wired, RefreshSourceFile must clear the
+    /// affordance (false + empty path), never throw.
+    /// </summary>
+    [Fact]
+    public void ViewModel_RefreshSourceFile_NullCache_ClearsAffordance()
+    {
+        var prevRes = CoreState.ResourceCache;
+        try
+        {
+            CoreState.ResourceCache = null;
+            var vm = new WorldMapImageViewModel
+            {
+                SourceFilePath = "stale",
+                IsSourceFileAvailable = true,
+            };
+            vm.RefreshSourceFile();
+            Assert.False(vm.IsSourceFileAvailable);
+            Assert.Equal(string.Empty, vm.SourceFilePath);
+        }
+        finally { CoreState.ResourceCache = prevRes; }
+    }
+
     // ===================================================================
     // Helpers
     // ===================================================================
+
+    static void EnsureCoreStateBaseDirectory()
+    {
+        if (!string.IsNullOrEmpty(CoreState.BaseDirectory))
+            return;
+        string? assemblyDir = Path.GetDirectoryName(
+            System.Reflection.Assembly.GetExecutingAssembly().Location);
+        if (assemblyDir != null)
+            CoreState.BaseDirectory = assemblyDir;
+    }
 
     static int FindElementEnd(string axaml, int elementStart)
     {
@@ -823,6 +1241,37 @@ public class WorldMapImageParityTests
             else if (c == '>' && !inAttrValue) return i;
         }
         return -1;
+    }
+
+    /// <summary>The expression-bodied member (<c>=&gt; ...;</c>) starting at the
+    /// first occurrence of <paramref name="declFragment"/>: from the fragment up
+    /// to and including the next <c>;</c>. Empty string if not found. Used to
+    /// scope an assertion to ONE specific method instead of the whole file.</summary>
+    static string ExpressionBody(string source, string declFragment)
+    {
+        int i = source.IndexOf(declFragment, StringComparison.Ordinal);
+        if (i < 0) return "";
+        int semi = source.IndexOf(';', i);
+        return semi < 0 ? source.Substring(i) : source.Substring(i, semi - i + 1);
+    }
+
+    /// <summary>The brace-matched method body starting at the first occurrence of
+    /// <paramref name="declFragment"/> (from the fragment through the matching
+    /// closing <c>}</c>). Empty string if not found. Scopes an assertion to ONE
+    /// specific method instead of the whole file.</summary>
+    static string MethodBody(string source, string declFragment)
+    {
+        int i = source.IndexOf(declFragment, StringComparison.Ordinal);
+        if (i < 0) return "";
+        int brace = source.IndexOf('{', i);
+        if (brace < 0) return "";
+        int depth = 0;
+        for (int j = brace; j < source.Length; j++)
+        {
+            if (source[j] == '{') depth++;
+            else if (source[j] == '}') { depth--; if (depth == 0) return source.Substring(i, j - i + 1); }
+        }
+        return source.Substring(i);
     }
 
     static void AssertOccurrences(string haystack, string needle, int expected)
@@ -868,6 +1317,9 @@ public class WorldMapImageParityTests
 
     static string ViewCodeBehindPath() => Path.Combine(FindRepoRoot(),
         "FEBuilderGBA.Avalonia", "Views", "WorldMapImageView.axaml.cs");
+
+    static string ViewModelPath() => Path.Combine(FindRepoRoot(),
+        "FEBuilderGBA.Avalonia", "ViewModels", "WorldMapImageViewModel.cs");
 
     static string FindRepoRoot()
     {

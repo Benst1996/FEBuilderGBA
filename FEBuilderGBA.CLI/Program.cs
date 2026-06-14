@@ -10,8 +10,14 @@ namespace FEBuilderGBA.CLI
 {
     static class Program
     {
+        // Raw, ORDERED argv — preserved so commands that accept REPEATABLE flags
+        // (e.g. --write-source --field=X --value=Y --field=A --value=B) can recover
+        // pair order, which the collapsing argsDic dictionary loses (#1141).
+        internal static string[] RawArgs = Array.Empty<string>();
+
         static int Main(string[] args)
         {
+            RawArgs = args ?? Array.Empty<string>();
             var argsDic = ParseArgs(args);
 
             // Set up base directory (where the exe lives)
@@ -273,6 +279,57 @@ namespace FEBuilderGBA.CLI
                 return RunRomInfo(argsDic);
             }
 
+            // --project=<dir> --resolve-addr=<hex>: resolve an address to a decomp
+            // project symbol (.map/ELF/.sym/JSON merged over shipped). Must be
+            // dispatched BEFORE the bare --project rom-info fallthrough (#1130).
+            if (argsDic.ContainsKey("--project") && argsDic.ContainsKey("--resolve-addr"))
+            {
+                return RunResolveAddr(argsDic);
+            }
+
+            // --migrate-diff --project=<dir> --rom2=<editedRom> [--out=report.tsv]:
+            // decomp diff-to-source migration assistant — classify changed ranges
+            // (symbol/category/source/confidence) for migrating edits back to source.
+            // Advisory + READ-ONLY. Must precede the bare --project fallthrough (#1131).
+            if (argsDic.ContainsKey("--migrate-diff"))
+            {
+                return RunMigrateDiff(argsDic);
+            }
+
+            // --export-asset must precede the bare --project rom-info fallthrough (#1133)
+            // — otherwise `--export-asset --project=<dir>` is swallowed by RunRomInfo
+            //   and the asset is never exported.
+            if (argsDic.ContainsKey("--export-asset"))
+            {
+                return RunExportAsset(argsDic);
+            }
+
+            // --write-source --project=<dir> --table=<name> --id=<n> --field=<f> --value=<v>:
+            // source-backed writer (#1132) — rewrite the owning C array element of a
+            // structured table entry instead of mutating the preview ROM. Must precede
+            // the bare --project rom-info fallthrough or it is swallowed by RunRomInfo.
+            if (argsDic.ContainsKey("--write-source"))
+            {
+                return RunWriteSource(argsDic);
+            }
+
+            // --build-project --project=<dir> [--reload] [--yes] [--timeout=<ms>]:
+            // run the decomp project's declared build command + optionally reload
+            // the built ROM into CoreState (#1134). Must precede the bare --project
+            // rom-info fallthrough so --build-project is not swallowed by RunRomInfo.
+            if (argsDic.ContainsKey("--build-project"))
+            {
+                return RunBuildProject(argsDic);
+            }
+
+            // --project=<dir> [--rom-info]: open a decomp project and report its
+            // mode + resolved preview ROM. Both `--project=<dir> --rom-info` and
+            // bare `--project=<dir>` route to the rom-info reporter (#1129 slice 1).
+            if (argsDic.ContainsKey("--project"))
+            {
+                return RunRomInfo(argsDic);
+            }
+
             if (argsDic.ContainsKey("--list-tables"))
             {
                 return RunListTables(argsDic);
@@ -422,8 +479,36 @@ namespace FEBuilderGBA.CLI
             Console.WriteLine("    --rom2=<path>          Second ROM to compare against");
             Console.WriteLine("    --out=<path>           Output TSV file (omit for summary to stdout)");
             Console.WriteLine("  --testonly               Run self-test diagnostics then exit");
-            Console.WriteLine("  --rom-info               Print ROM metadata: version, title, size, CRC32, checksum (requires --rom)");
+            Console.WriteLine("  --rom-info               Print ROM metadata: version, title, size, CRC32, checksum + Mode line (requires --rom or --project)");
+            Console.WriteLine("  --project=<dir>          Open a decomp project directory and load its built ROM for preview; combine with --rom-info");
+            Console.WriteLine("  --resolve-addr=<hex>     Resolve an address to a decomp project symbol (requires --project); prints name/source/offset");
+            Console.WriteLine("  --migrate-diff           Decomp diff-to-source migration assistant: classify built-vs-edited ROM changes (requires --project, --rom2)");
+            Console.WriteLine("    --rom2=<editedRom>     The FEBuilder-edited ROM to compare against the project's built/baseline ROM");
+            Console.WriteLine("    --out=<report.tsv>     Optional: write the classified report (range/symbol/category/source/confidence) as TSV");
+            Console.WriteLine("    --max-gap=<int>        Optional: small-gap merge distance for range coalescing (default 16)");
             Console.WriteLine("  --list-tables            List all exportable struct table names (no ROM required)");
+            Console.WriteLine("  --export-asset           Export a ROM asset to a decomp source-tree path (requires --kind, --out, and --rom or --project)");
+            Console.WriteLine("    --kind=<kind>          Asset kind: graphics|palette|map|text (map data is always LZ77-decompressed)");
+            Console.WriteLine("    --out=<path>           Output path (project-relative when --project; absolute or relative when --rom)");
+            Console.WriteLine("    --addr=<hex>           ROM address of the asset (required for graphics, palette, map)");
+            Console.WriteLine("    --colors=<int>         Number of palette colors (default 16; for --kind=palette and --kind=graphics)");
+            Console.WriteLine("    --bpp=<int>            Bits per pixel (default 4; 4 or 8; for --kind=graphics)");
+            Console.WriteLine("    --width=<int>          Image width in pixels (required for --kind=graphics)");
+            Console.WriteLine("    --height=<int>         Image height in pixels (required for --kind=graphics)");
+            Console.WriteLine("    --palette-addr=<hex>   ROM address of the palette data (required for --kind=graphics)");
+            Console.WriteLine("    --compressed           (graphics only) the source tile data at --addr is LZ77-compressed (flag)");
+            Console.WriteLine("  --write-source           Rewrite an owning C/JSON source element for a structured table entry (requires --project, --table, --id, --field, --value)");
+            Console.WriteLine("    --project=<dir>        Decomp project directory (the table must declare a source owner in tables[])");
+            Console.WriteLine("    --table=<name>         Structured table name (items, units (alias characters), classes, ...)");
+            Console.WriteLine("    --id=<n>               Entry index (respecting the array order)");
+            Console.WriteLine("    --field=<name>         C/JSON field name to change (must be declared on the owner; REPEATABLE — pair each --field with a following --value; other flags may appear between them; a 2nd --field before its --value, or an unpaired --field/--value, is a usage error)");
+            Console.WriteLine("    --value=<int>          New value for the preceding --field (0x hex or decimal; signed fields take the two's-complement magnitude; REPEATABLE)");
+            Console.WriteLine("    --out-diff=<path>      Optional: write a unified-diff-ish before/after of the changed element");
+            Console.WriteLine("  --build-project          Run the decomp project's declared build command (requires --project; gated behind --yes)");
+            Console.WriteLine("    --project=<dir>        Decomp project directory containing febuilder.project.json with a build section");
+            Console.WriteLine("    --yes                  Required to actually execute the build command (explicit opt-in gate)");
+            Console.WriteLine("    --reload               After a successful build, reload the built ROM into CoreState and print version info");
+            Console.WriteLine("    --timeout=<ms>         Build timeout in milliseconds (default 600000 = 10 minutes)");
             Console.WriteLine("  --export-palette         Export GBA palette to file (requires --rom, --addr, --out)");
             Console.WriteLine("    --addr=<hex>           Palette data address in ROM (e.g., 0x5524)");
             Console.WriteLine("    --colors=<int>         Number of colors to export (default: 16)");
@@ -444,11 +529,19 @@ namespace FEBuilderGBA.CLI
             Console.WriteLine("  FEBuilderGBA.CLI --pointercalc --rom=source.gba --target=target.gba --address=0x100,0x200");
             Console.WriteLine("  FEBuilderGBA.CLI --rebuild --rom=modified.gba --fromrom=original.gba");
             Console.WriteLine("  FEBuilderGBA.CLI --songexchange --rom=dest.gba --fromrom=source.gba --fromsong=0x1A --tosong=0x1A");
+            Console.WriteLine("  FEBuilderGBA.CLI --migrate-diff --project=decomp/ --rom2=edited.gba --out=migrate.tsv");
             Console.WriteLine("  FEBuilderGBA.CLI --convertmap1picture --in=map.png --outImg=tiles.bin --outTSA=tsa.bin");
             Console.WriteLine("  FEBuilderGBA.CLI --translate --rom=rom.gba --out=texts.tsv");
             Console.WriteLine("  FEBuilderGBA.CLI --translate --rom=rom.gba --in=texts.tsv");
             Console.WriteLine("  FEBuilderGBA.CLI --translate-roundtrip --rom=rom.gba");
             Console.WriteLine("  FEBuilderGBA.CLI --translate-roundtrip --rom=rom.gba --out=diff");
+            Console.WriteLine("  FEBuilderGBA.CLI --export-asset --kind=palette --rom=rom.gba --addr=0x5524 --out=gfx/palette.pal");
+            Console.WriteLine("  FEBuilderGBA.CLI --export-asset --kind=graphics --project=decomp/ --addr=0x123000 --width=64 --height=64 --palette-addr=0x124000 --out=gfx/tiles.png");
+            Console.WriteLine("  FEBuilderGBA.CLI --export-asset --kind=map --rom=rom.gba --addr=0x200000 --out=map/chapter1.mar");
+            Console.WriteLine("  FEBuilderGBA.CLI --export-asset --kind=text --rom=rom.gba --out=text/");
+            Console.WriteLine("  FEBuilderGBA.CLI --write-source --project=decomp/ --table=items --id=1 --field=might --value=0x0A");
+            Console.WriteLine("  FEBuilderGBA.CLI --write-source --project=decomp/ --table=units --id=1 --field=hp --value=18 --field=pow --value=7");
+            Console.WriteLine("  FEBuilderGBA.CLI --build-project --project=decomp/ --reload --yes");
             Console.WriteLine("  FEBuilderGBA.CLI --export-data --rom=rom.gba --table=units --out=units.tsv");
             Console.WriteLine("  FEBuilderGBA.CLI --export-data --rom=rom.gba --table=all --out=data");
             Console.WriteLine("  FEBuilderGBA.CLI --import-data --rom=rom.gba --table=units --in=units.tsv");
@@ -949,15 +1042,29 @@ namespace FEBuilderGBA.CLI
 
             RomLoader.InitEnvironment();
             string forceVersion = argsDic.ContainsKey("--force-version") ? argsDic["--force-version"] : null;
+            // Load the DESTINATION ROM into CoreState.ROM — that is the ROM we
+            // mutate, and the undo snapshots (Undo.UndoPostion) read CoreState.ROM.
             if (!RomLoader.LoadRom(destPath, forceVersion))
                 return 1;
 
+            // Read the SOURCE ROM bytes (the donor); the dest table offsets are
+            // resolved against CoreState.ROM.Data so the slot we repoint matches
+            // the ROM we Save below.
             byte[] sourceData = File.ReadAllBytes(sourcePath);
-            byte[] destData = File.ReadAllBytes(destPath);
+            byte[] destData = CoreState.ROM.Data;
 
             uint soundTablePtr = CoreState.ROM.RomInfo.sound_table_pointer;
-            uint srcTableAddr = SongExchangeCore.FindSongTablePointer(sourceData, soundTablePtr);
+            // DEST = the loaded ROM, so use its known sound_table_pointer.
             uint destTableAddr = SongExchangeCore.FindSongTablePointer(destData, soundTablePtr);
+            // DONOR may be a DIFFERENT version, so pattern-scan its OWN sound-engine
+            // signature (WF SongUtil.FindSongTablePointer(byte[])) instead of assuming
+            // the dest's sound_table_pointer address. Fall back to the dest's pointer
+            // address if the scan fails (donor==dest version).
+            uint srcTableAddr = SongExchangeCore.FindSongTablePointerByScan(sourceData);
+            if (srcTableAddr == 0)
+            {
+                srcTableAddr = SongExchangeCore.FindSongTablePointer(sourceData, soundTablePtr);
+            }
 
             if (srcTableAddr == 0 || destTableAddr == 0)
             {
@@ -978,16 +1085,35 @@ namespace FEBuilderGBA.CLI
                 Console.Error.WriteLine($"Error: Destination song ID 0x{toSongId:X} out of range (max 0x{destSongs.Count - 1:X}).");
                 return 1;
             }
-
-            bool ok = SongExchangeCore.ConvertSong(sourceData, srcSongs[(int)fromSongId],
-                                                     destData, destSongs[(int)toSongId]);
-            if (!ok)
+            if (toSongId == 0)
             {
-                Console.Error.WriteLine("Error: Song conversion failed.");
+                Console.Error.WriteLine("Error: Cannot write to SongID 0x0.");
                 return 1;
             }
 
-            File.WriteAllBytes(destPath, destData);
+            // Real cross-ROM transplant: build the InstrumentMap, Rip every track,
+            // and Burn into the destination ROM under a single undo scope.
+            if (CoreState.Undo == null) CoreState.Undo = new Undo();
+            Undo.UndoData undo = CoreState.Undo.NewUndoData("SongExchange");
+            SongExchangeCore.ConvertResult conv;
+            using (ROM.BeginUndoScope(undo))
+            {
+                conv = SongExchangeCore.ConvertSong(CoreState.ROM, destSongs[(int)toSongId],
+                                                    sourceData, srcSongs[(int)fromSongId], undo);
+            }
+
+            if (!conv.Success)
+            {
+                Console.Error.WriteLine($"Error: Song conversion failed. {conv.ErrorMessage}");
+                return 1;
+            }
+            if (conv.HadStructureWarning)
+            {
+                Console.WriteLine("Warning: the source song's instrument data was partially corrupt; only recognized tracks were transplanted.");
+            }
+
+            CoreState.Undo.Push(undo);
+            CoreState.ROM.Save(destPath, true);
             Console.WriteLine($"Song exchange complete: song 0x{fromSongId:X} from {sourcePath} -> song 0x{toSongId:X} in {destPath}");
             return 0;
         }
@@ -3989,21 +4115,166 @@ namespace FEBuilderGBA.CLI
             return 0;
         }
 
+        /// <summary>
+        /// Run the decomp project's declared build command and optionally reload the
+        /// built ROM into CoreState (#1134). Never throws; always returns an exit code.
+        ///
+        /// Security: the build command is NEVER auto-run. It requires ALL of:
+        ///   (1) --project=&lt;dir&gt; pointing at a manifest that opts in via a build section,
+        ///   (2) --yes (explicit confirm flag),
+        ///   (3) The manifest build section itself (BuildEnabled==true).
+        /// Without --yes the command line is printed and the process exits 0 (dry-run).
+        /// </summary>
+        static int RunBuildProject(Dictionary<string, string> argsDic)
+        {
+            try
+            {
+                // Require --project
+                if (!argsDic.ContainsKey("--project") || string.IsNullOrEmpty(argsDic["--project"]))
+                {
+                    Console.Error.WriteLine("Error: --build-project requires --project=<dir>");
+                    return 1;
+                }
+                string dir = argsDic["--project"];
+
+                RomLoader.InitEnvironment();
+
+                var project = DecompProjectDetector.Detect(dir);
+                if (project == null)
+                {
+                    Console.Error.WriteLine($"Error: Not a decomp project directory: {dir}");
+                    return 1;
+                }
+
+                // Parse timeout
+                int timeout = ProcessRunnerCore.DefaultTimeoutMs;
+                if (argsDic.ContainsKey("--timeout"))
+                    TryParseIntArg(argsDic["--timeout"], out timeout);
+
+                string cmdLine = DecompBuildCore.GetEffectiveCommandLine(project);
+                if (string.IsNullOrEmpty(cmdLine))
+                {
+                    Console.WriteLine("Project has not opted into FEBuilder-managed builds; add a build section to febuilder.project.json.");
+                    Console.WriteLine("Example: { \"schemaVersion\": 1, \"builtRom\": \"out.gba\", \"build\": \"make\" }");
+                    return 2;
+                }
+                Console.WriteLine($"Command: {cmdLine}");
+
+                // Build opt-in check
+                if (!project.IsBuildEnabled)
+                {
+                    Console.WriteLine("Project has not opted into FEBuilder-managed builds; add a build section to febuilder.project.json.");
+                    return 2;
+                }
+
+                // Dry-run gate
+                if (!argsDic.ContainsKey("--yes"))
+                {
+                    Console.WriteLine($"This will execute the above command in: {project.ProjectRoot}");
+                    Console.WriteLine("Re-run with --yes to execute.");
+                    return 0;
+                }
+
+                // Execute the build
+                var res = DecompBuildCore.Build(project, timeout);
+
+                // Always print captured output
+                if (!string.IsNullOrEmpty(res.Run.Stdout))
+                {
+                    Console.WriteLine("--- stdout ---");
+                    Console.Write(res.Run.Stdout);
+                }
+                if (!string.IsNullOrEmpty(res.Run.Stderr))
+                {
+                    Console.Error.WriteLine("--- stderr ---");
+                    Console.Error.Write(res.Run.Stderr);
+                }
+
+                if (res.Run.Started)
+                    Console.WriteLine($"Exit: {res.Run.ExitCode}");
+
+                if (!res.Success)
+                {
+                    Console.Error.WriteLine($"Build failed: {res.Message}");
+                    return 1;
+                }
+
+                // Build succeeded
+                bool doReload = argsDic.ContainsKey("--reload");
+                if (doReload)
+                {
+                    CoreState.DecompProject = project;
+                    var reloadStatus = DecompBuildCore.ReloadBuiltRom(
+                        project,
+                        (p, fv) => RomLoader.LoadRom(p, fv));
+
+                    if (reloadStatus != DecompResolveStatus.Ok)
+                    {
+                        Console.Error.WriteLine("Error: no built ROM after build (resolve failed).");
+                        return 1;
+                    }
+
+                    // Full init for symbol re-parse
+                    RomLoader.InitFull();
+
+                    string version = CoreState.ROM?.RomInfo?.VersionToFilename ?? "unknown";
+                    Console.WriteLine($"Mode: Decomp (preview ROM {project.BuiltRomPath})");
+                    Console.WriteLine($"version={version}");
+                    Console.WriteLine($"Stale={DecompBuildCore.IsStale(project)}");
+                }
+                else
+                {
+                    Console.WriteLine("Build succeeded (use --reload to load the built ROM)");
+                    Console.WriteLine($"Stale={DecompBuildCore.IsStale(project)}");
+                }
+
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Unhandled error in --build-project: {ex.Message}");
+                return 1;
+            }
+        }
+
         static int RunRomInfo(Dictionary<string, string> argsDic)
         {
-            if (!argsDic.ContainsKey("--rom") || string.IsNullOrEmpty(argsDic["--rom"]))
-            { Console.Error.WriteLine("Error: --rom-info requires --rom=<rom>"); return 1; }
+            // Two load sources: classic --rom=<file>, or decomp --project=<dir>.
+            bool isProject = argsDic.ContainsKey("--project") && !string.IsNullOrEmpty(argsDic["--project"]);
+            string romPath;
+            bool decompMode = false;
 
-            string romPath = argsDic["--rom"];
-            if (!File.Exists(romPath))
-            { Console.Error.WriteLine($"Error: ROM not found: {romPath}"); return 1; }
-
-            // Try to detect ROM version first — fail fast for non-ROM files
-            RomLoader.InitEnvironment();
-            if (!RomLoader.LoadRom(romPath, argsDic.ContainsKey("--force-version") ? argsDic["--force-version"] : null))
+            if (isProject)
             {
-                Console.Error.WriteLine($"Error: Not a recognized GBA Fire Emblem ROM: {romPath}");
-                return 1;
+                string projectDir = argsDic["--project"];
+                RomLoader.InitEnvironment();
+                if (!RomLoader.LoadProject(projectDir))
+                {
+                    // LoadProject already emitted a ShowError to stderr (CliAppServices).
+                    // Re-emit the actionable message so the failure is unambiguous on
+                    // both channels for the "run the build first" assertion (#1129).
+                    Console.Error.WriteLine($"Error: Could not open decomp project: {projectDir}");
+                    return 1;
+                }
+                romPath = CoreState.DecompProject?.BuiltRomPath ?? "";
+                decompMode = true;
+            }
+            else
+            {
+                if (!argsDic.ContainsKey("--rom") || string.IsNullOrEmpty(argsDic["--rom"]))
+                { Console.Error.WriteLine("Error: --rom-info requires --rom=<rom> or --project=<dir>"); return 1; }
+
+                romPath = argsDic["--rom"];
+                if (!File.Exists(romPath))
+                { Console.Error.WriteLine($"Error: ROM not found: {romPath}"); return 1; }
+
+                // Try to detect ROM version first — fail fast for non-ROM files
+                RomLoader.InitEnvironment();
+                if (!RomLoader.LoadRom(romPath, argsDic.ContainsKey("--force-version") ? argsDic["--force-version"] : null))
+                {
+                    Console.Error.WriteLine($"Error: Not a recognized GBA Fire Emblem ROM: {romPath}");
+                    return 1;
+                }
             }
 
             byte[] data = CoreState.ROM.Data;
@@ -4044,7 +4315,200 @@ namespace FEBuilderGBA.CLI
             Console.WriteLine($"header_checksum=0x{actual:X02}");
             Console.WriteLine($"header_checksum_expected=0x{expected:X02}");
             Console.WriteLine($"header_checksum_status={checksumStatus}");
+            if (decompMode)
+            {
+                Console.WriteLine($"Mode: Decomp (preview ROM {romPath})");
+                // #1130: report the decomp symbol-artifact breakdown.
+                try
+                {
+                    if (CoreState.DecompProject != null)
+                    {
+                        var resolver = DecompSymbolResolver.Load(CoreState.DecompProject);
+                        Console.WriteLine(
+                            $"Symbols: {resolver.Count} (map={resolver.CountMap} elf={resolver.CountElf} sym={resolver.CountSym} json={resolver.CountJson})");
+                    }
+                }
+                catch { /* never break rom-info on a symbol-load fault */ }
+            }
+            else
+                Console.WriteLine("Mode: Rom");
             return 0;
+        }
+
+        // #1130: resolve an address to a decomp project symbol. Loads the project
+        // (which wires CoreState.AsmMapFileAsmCache -> MergedAsmMapFile), normalizes
+        // the address to a GBA pointer, then resolves exact -> span-near. Never
+        // throws; always exits 0.
+        static int RunResolveAddr(Dictionary<string, string> argsDic)
+        {
+            try
+            {
+                string projectDir = argsDic.ContainsKey("--project") ? argsDic["--project"] : "";
+                if (string.IsNullOrEmpty(projectDir))
+                {
+                    Console.Error.WriteLine("Error: --resolve-addr requires --project=<dir>");
+                    return 0;
+                }
+
+                RomLoader.InitEnvironment();
+                if (!RomLoader.LoadProject(projectDir))
+                {
+                    Console.Error.WriteLine($"Error: Could not open decomp project: {projectDir}");
+                    return 0;
+                }
+
+                string addrStr = argsDic.ContainsKey("--resolve-addr") ? argsDic["--resolve-addr"] : "";
+                uint rawAddr = U.atoi0x((addrStr ?? "").Trim());
+                uint pointer = U.toPointer(rawAddr);
+
+                Console.WriteLine($"addr=0x{pointer:X08}");
+
+                IAsmMapFile asmMap = CoreState.AsmMapFileAsmCache?.GetAsmMapFile();
+                if (asmMap == null)
+                {
+                    Console.WriteLine("symbol=(none)");
+                    return 0;
+                }
+
+                // Exact match first.
+                if (asmMap.TryGetValue(pointer, out var p) && p != null)
+                {
+                    Console.WriteLine($"symbol={p.ToStringInfo()}");
+                    Console.WriteLine($"source={SourceFor(asmMap, pointer)}");
+                    Console.WriteLine("offset=+0x0");
+                    return 0;
+                }
+
+                // Span-covering nearest.
+                uint near = asmMap.SearchNear(pointer);
+                if (near != U.NOT_FOUND
+                    && asmMap.TryGetValue(near, out var np)
+                    && np != null
+                    && pointer < (ulong)near + np.Length)
+                {
+                    uint off = pointer - near;
+                    Console.WriteLine($"symbol={np.ToStringInfo()}");
+                    Console.WriteLine($"source={SourceFor(asmMap, near)}");
+                    Console.WriteLine($"offset=+0x{off:X}");
+                    return 0;
+                }
+
+                Console.WriteLine("symbol=(none)");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                // Never throw — report and exit 0.
+                Console.Error.WriteLine($"resolve-addr error: {ex.Message}");
+                Console.WriteLine("symbol=(none)");
+                return 0;
+            }
+        }
+
+        // Resolve the artifact source label for a key: a project symbol reports its
+        // artifact (map/elf/sym/json); anything else is "shipped".
+        static string SourceFor(IAsmMapFile asmMap, uint key)
+        {
+            if (asmMap is MergedAsmMapFile merged
+                && merged.TryGetSource(key, out var src))
+            {
+                switch (src)
+                {
+                    case DecompArtifactSource.Map: return "map";
+                    case DecompArtifactSource.Elf: return "elf";
+                    case DecompArtifactSource.Sym: return "sym";
+                    case DecompArtifactSource.Json: return "json";
+                }
+            }
+            return "shipped";
+        }
+
+        // #1131: decomp diff-to-source migration assistant. Opens the project (built
+        // ROM = canonical baseline), reads the edited ROM, classifies each changed
+        // range (symbol/category/source/confidence), and prints/writes the advisory
+        // report. ADVISORY + READ-ONLY — never writes the ROM or source. Analysis
+        // never throws; usage faults return 1, otherwise exit 0.
+        static int RunMigrateDiff(Dictionary<string, string> argsDic)
+        {
+            string projectDir = argsDic.ContainsKey("--project") ? argsDic["--project"] : "";
+            if (string.IsNullOrEmpty(projectDir))
+            {
+                Console.Error.WriteLine("Error: --migrate-diff requires --project=<dir>");
+                return 1;
+            }
+            string editedPath = argsDic.ContainsKey("--rom2") ? argsDic["--rom2"] : "";
+            if (string.IsNullOrEmpty(editedPath))
+            {
+                Console.Error.WriteLine("Error: --migrate-diff requires --rom2=<editedRom>");
+                return 1;
+            }
+            if (!File.Exists(editedPath))
+            {
+                Console.Error.WriteLine($"Error: edited ROM not found: {editedPath}");
+                return 1;
+            }
+
+            RomLoader.InitEnvironment();
+            if (!RomLoader.LoadProject(projectDir))
+            {
+                Console.Error.WriteLine($"Error: Could not open decomp project: {projectDir}");
+                return 1;
+            }
+
+            ROM builtRom = CoreState.ROM;
+            if (builtRom == null || builtRom.Data == null || builtRom.Data.Length == 0)
+            {
+                Console.Error.WriteLine("Error: built/preview ROM unavailable — run the build first.");
+                return 1;
+            }
+
+            byte[] editedBytes;
+            try { editedBytes = File.ReadAllBytes(editedPath); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error: could not read edited ROM: {ex.Message}");
+                return 1;
+            }
+
+            // Pull the merged resolver (project over shipped) from the wired cache,
+            // plus a freshly-loaded resolver for the section / object-path hints.
+            MergedAsmMapFile map = CoreState.AsmMapFileAsmCache?.GetAsmMapFile() as MergedAsmMapFile;
+            DecompSymbolResolver resolver = null;
+            try { resolver = DecompSymbolResolver.Load(CoreState.DecompProject); }
+            catch { /* analyzer tolerates a null resolver */ }
+
+            int maxGap = DecompDiffMigrationCore.DefaultMaxGap;
+            if (argsDic.ContainsKey("--max-gap") && int.TryParse(argsDic["--max-gap"], out int mg) && mg >= 0)
+                maxGap = mg;
+
+            Console.WriteLine($"Project: {projectDir}");
+            Console.WriteLine($"Built ROM (baseline): {builtRom.Filename} ({builtRom.Data.Length} bytes)");
+            Console.WriteLine($"Edited ROM: {editedPath} ({editedBytes.Length} bytes)");
+            Console.WriteLine("Analyzing (advisory, read-only)...");
+
+            MigrationReport report = DecompDiffMigrationCore.Analyze(builtRom, editedBytes, map, resolver, maxGap);
+
+            // A requested --out write that fails is a FAILURE, not a warning:
+            // automation that asked for a TSV must not be told "success" with no
+            // report (Copilot PR #1139 finding 4). Print the summary first so the
+            // analysis result is still visible, then exit non-zero.
+            int exitCode = 0;
+            if (argsDic.ContainsKey("--out") && !string.IsNullOrEmpty(argsDic["--out"]))
+            {
+                try
+                {
+                    File.WriteAllText(argsDic["--out"], DecompDiffMigrationCore.FormatTSV(report));
+                    Console.WriteLine($"Report written to: {argsDic["--out"]}");
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Error: could not write report to '{argsDic["--out"]}': {ex.Message}");
+                    exitCode = 1;
+                }
+            }
+
+            Console.WriteLine(DecompDiffMigrationCore.FormatSummary(report));
+            return exitCode;
         }
 
         static int RunListTables(Dictionary<string, string> argsDic)
@@ -4056,6 +4520,378 @@ namespace FEBuilderGBA.CLI
                 Console.WriteLine(name);
             }
             return 0;
+        }
+
+        /// <summary>
+        /// --export-asset: export a ROM asset (palette/graphics/map/text) to a decomp source-tree path.
+        /// Supports both --project=&lt;dir&gt; (with path containment) and --rom=&lt;path&gt; (classic, no containment).
+        /// READ-ONLY: never modifies the ROM.
+        /// </summary>
+        static int RunExportAsset(Dictionary<string, string> argsDic)
+        {
+            // ---- Required: --kind ----
+            if (!argsDic.ContainsKey("--kind") || string.IsNullOrEmpty(argsDic["--kind"]))
+            { Console.Error.WriteLine("Error: --export-asset requires --kind=<graphics|palette|map|text>"); return 1; }
+            string kind = argsDic["--kind"].ToLowerInvariant();
+
+            // ---- Required: --out ----
+            if (!argsDic.ContainsKey("--out") || string.IsNullOrEmpty(argsDic["--out"]))
+            { Console.Error.WriteLine("Error: --export-asset requires --out=<path>"); return 1; }
+            string outRel = argsDic["--out"];
+
+            // ---- ROM source: --project or --rom ----
+            bool isProject = argsDic.ContainsKey("--project") && !string.IsNullOrEmpty(argsDic["--project"]);
+            bool isRom = argsDic.ContainsKey("--rom") && !string.IsNullOrEmpty(argsDic["--rom"]);
+            if (!isProject && !isRom)
+            { Console.Error.WriteLine("Error: --export-asset requires --rom=<path> or --project=<dir>"); return 1; }
+
+            RomLoader.InitEnvironment();
+
+            DecompProject project = null;
+            if (isProject)
+            {
+                string projectDir = argsDic["--project"];
+                if (!RomLoader.LoadProject(projectDir))
+                    return 1;
+                project = CoreState.DecompProject;
+            }
+            else
+            {
+                string romPath = argsDic["--rom"];
+                if (!File.Exists(romPath))
+                { Console.Error.WriteLine($"Error: ROM not found: {romPath}"); return 1; }
+                string forceVersion = argsDic.ContainsKey("--force-version") ? argsDic["--force-version"] : null;
+                if (!RomLoader.LoadRom(romPath, forceVersion))
+                    return 1;
+                RomLoader.InitFull();
+            }
+
+            // ---- Resolve output path ----
+            string absOut = DecompAssetExportCore.ResolveSourcePath(project, outRel);
+            if (absOut == null)
+            {
+                Console.Error.WriteLine("Error: output path rejected (outside project root or invalid)");
+                return 2;
+            }
+
+            ROM rom = CoreState.ROM;
+
+            // ---- Helper: parse hex address ----
+            static bool TryParseAddr(string s, out uint result)
+            {
+                result = 0;
+                if (string.IsNullOrEmpty(s)) return false;
+                string clean = s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? s.Substring(2) : s;
+                if (!uint.TryParse(clean, System.Globalization.NumberStyles.HexNumber, null, out result))
+                    return false;
+                result = U.toOffset(result);
+                return true;
+            }
+
+            // ---- Dispatch by kind ----
+            DecompAssetResult result;
+
+            switch (kind)
+            {
+                case "palette":
+                {
+                    if (!argsDic.ContainsKey("--addr") || string.IsNullOrEmpty(argsDic["--addr"]))
+                    { Console.Error.WriteLine("Error: --export-asset --kind=palette requires --addr=<hex>"); return 1; }
+                    if (!TryParseAddr(argsDic["--addr"], out uint addr))
+                    { Console.Error.WriteLine($"Error: Invalid address: {argsDic["--addr"]}"); return 1; }
+                    int colors = 16;
+                    if (argsDic.ContainsKey("--colors") && !string.IsNullOrEmpty(argsDic["--colors"]))
+                    {
+                        if (!int.TryParse(argsDic["--colors"], out colors) || colors < 1 || colors > 256)
+                        { Console.Error.WriteLine($"Error: --colors must be 1-256"); return 1; }
+                    }
+                    result = DecompAssetExportCore.ExportPalette(rom, addr, colors, absOut);
+                    break;
+                }
+
+                case "graphics":
+                {
+                    if (!argsDic.ContainsKey("--addr") || string.IsNullOrEmpty(argsDic["--addr"]))
+                    { Console.Error.WriteLine("Error: --export-asset --kind=graphics requires --addr=<hex>"); return 1; }
+                    if (!argsDic.ContainsKey("--width") || string.IsNullOrEmpty(argsDic["--width"]))
+                    { Console.Error.WriteLine("Error: --export-asset --kind=graphics requires --width=<int>"); return 1; }
+                    if (!argsDic.ContainsKey("--height") || string.IsNullOrEmpty(argsDic["--height"]))
+                    { Console.Error.WriteLine("Error: --export-asset --kind=graphics requires --height=<int>"); return 1; }
+                    if (!argsDic.ContainsKey("--palette-addr") || string.IsNullOrEmpty(argsDic["--palette-addr"]))
+                    { Console.Error.WriteLine("Error: --export-asset --kind=graphics requires --palette-addr=<hex>"); return 1; }
+                    if (!TryParseAddr(argsDic["--addr"], out uint addr))
+                    { Console.Error.WriteLine($"Error: Invalid --addr: {argsDic["--addr"]}"); return 1; }
+                    if (!TryParseAddr(argsDic["--palette-addr"], out uint palAddr))
+                    { Console.Error.WriteLine($"Error: Invalid --palette-addr: {argsDic["--palette-addr"]}"); return 1; }
+                    if (!int.TryParse(argsDic["--width"], out int width) || width <= 0)
+                    { Console.Error.WriteLine($"Error: Invalid --width: {argsDic["--width"]}"); return 1; }
+                    if (!int.TryParse(argsDic["--height"], out int height) || height <= 0)
+                    { Console.Error.WriteLine($"Error: Invalid --height: {argsDic["--height"]}"); return 1; }
+                    int bpp = 4;
+                    if (argsDic.ContainsKey("--bpp") && !string.IsNullOrEmpty(argsDic["--bpp"]))
+                    {
+                        if (!int.TryParse(argsDic["--bpp"], out bpp) || (bpp != 4 && bpp != 8))
+                        { Console.Error.WriteLine("Error: --bpp must be 4 or 8"); return 1; }
+                    }
+                    int colors = 16;
+                    if (argsDic.ContainsKey("--colors") && !string.IsNullOrEmpty(argsDic["--colors"]))
+                    {
+                        if (!int.TryParse(argsDic["--colors"], out colors) || colors < 1 || colors > 256)
+                        { Console.Error.WriteLine("Error: --colors must be 1-256"); return 1; }
+                    }
+                    bool compressed = argsDic.ContainsKey("--compressed");
+                    result = DecompAssetExportCore.ExportGraphics(rom, addr, width, height, bpp, compressed, palAddr, colors, absOut);
+                    break;
+                }
+
+                case "map":
+                {
+                    if (!argsDic.ContainsKey("--addr") || string.IsNullOrEmpty(argsDic["--addr"]))
+                    { Console.Error.WriteLine("Error: --export-asset --kind=map requires --addr=<hex>"); return 1; }
+                    if (!TryParseAddr(argsDic["--addr"], out uint addr))
+                    { Console.Error.WriteLine($"Error: Invalid address: {argsDic["--addr"]}"); return 1; }
+                    result = DecompAssetExportCore.ExportMap(rom, addr, absOut);
+                    break;
+                }
+
+                case "text":
+                {
+                    // --out is treated as a directory for text export
+                    result = DecompAssetExportCore.ExportText(rom, absOut);
+                    break;
+                }
+
+                default:
+                    Console.Error.WriteLine($"Error: Unknown --kind '{kind}'. Use: graphics, palette, map, text");
+                    return 1;
+            }
+
+            // ---- Report result ----
+            if (result.Ok)
+            {
+                foreach (string path in result.WrittenPaths)
+                    Console.WriteLine($"Wrote: {path}");
+                return 0;
+            }
+            else
+            {
+                Console.Error.WriteLine($"Error: {result.Message}");
+                return result.Status == DecompAssetStatus.PathRejected ? 2 : 1;
+            }
+        }
+
+        /// <summary>
+        /// --write-source: source-backed table-entry writer (#1132). Opens a decomp
+        /// project, then rewrites the owning C array element for a structured table
+        /// entry's field instead of mutating the preview ROM. READ-ONLY w.r.t. the ROM;
+        /// the only mutation is to the project's declared source file.
+        ///
+        /// Exit codes: 0 = source rewritten; 2 = ROM-only / manual / not owned /
+        /// unsupported field / rejected / malformed manifest (advisory, no write);
+        /// 1 = usage fault / parse failure / source-not-found / unexpected error.
+        ///
+        /// #1141: <c>--field</c>/<c>--value</c> are REPEATABLE — pair each
+        /// <c>--field=X</c> with a FOLLOWING <c>--value=Y</c> in argv order (other flags may
+        /// appear between them; a second <c>--field</c> before its <c>--value</c>, or an
+        /// unpaired <c>--field</c>/<c>--value</c>, is a usage error). The dictionary
+        /// collapses duplicates, so the raw argv is parsed for pairs. Last value wins on a
+        /// duplicate field (a warning is printed). Signed fields are driven off the manifest
+        /// <c>fields[].signed</c>; pass the two's-complement magnitude (decimal or 0x hex) —
+        /// e.g. <c>--value=255</c> for an int8 -1.
+        /// </summary>
+        static int RunWriteSource(Dictionary<string, string> argsDic)
+        {
+            // ---- Required args ----
+            string projectDir = argsDic.ContainsKey("--project") ? argsDic["--project"] : "";
+            if (string.IsNullOrEmpty(projectDir))
+            { Console.Error.WriteLine("Error: --write-source requires --project=<dir>"); return 1; }
+
+            string table = argsDic.ContainsKey("--table") ? argsDic["--table"] : "";
+            if (string.IsNullOrEmpty(table))
+            { Console.Error.WriteLine("Error: --write-source requires --table=<name>"); return 1; }
+
+            if (!argsDic.ContainsKey("--id") || string.IsNullOrEmpty(argsDic["--id"]))
+            { Console.Error.WriteLine("Error: --write-source requires --id=<n>"); return 1; }
+            if (!TryParseIntArg(argsDic["--id"], out int entryId) || entryId < 0)
+            { Console.Error.WriteLine($"Error: Invalid --id: {argsDic["--id"]}"); return 1; }
+
+            // ---- Field/value pairs (REPEATABLE; ordered from raw argv) ----
+            if (!TryExtractFieldValuePairs(RawArgs, out var changedFields, out string pairErr))
+            { Console.Error.WriteLine($"Error: {pairErr}"); return 1; }
+            if (changedFields.Count == 0)
+            { Console.Error.WriteLine("Error: --write-source requires at least one --field=<name> --value=<int> pair"); return 1; }
+
+            // ---- Open the project (sets CoreState.DecompProject + loads built ROM) ----
+            RomLoader.InitEnvironment();
+            if (!RomLoader.LoadProject(projectDir))
+                return 1;
+
+            DecompProject project = CoreState.DecompProject;
+
+            DecompSourceWriteResult res = DecompSourceWriterCore.WriteTableEntry(
+                project, table, entryId, changedFields);
+
+            if (res.Ok)
+            {
+                Console.WriteLine($"Source file: {res.SourceFile}");
+
+                // A no-op (empty ChangedFields) means the source already matched the
+                // requested value(s): nothing was written, no rebuild is needed
+                // (#1132 review finding 2). Report it honestly and skip the diff/rebuild.
+                bool anyChanged = res.ChangedFields != null && res.ChangedFields.Count > 0;
+                if (!anyChanged)
+                {
+                    Console.WriteLine("No change needed (source already matches the requested value).");
+                    Console.WriteLine("NeedsRebuild=false");
+                    return 0;
+                }
+
+                Console.WriteLine($"Entry {res.EntryId}, fields changed: {string.Join(", ", res.ChangedFields)}");
+                Console.WriteLine($"Lines {res.ChangedLineStart}-{res.ChangedLineEnd}");
+                Console.WriteLine("--- BEFORE ---");
+                Console.WriteLine(res.BeforeText);
+                Console.WriteLine("--- AFTER ---");
+                Console.WriteLine(res.AfterText);
+
+                // Optional --out-diff: a simple unified-diff-ish artifact of the element.
+                if (argsDic.ContainsKey("--out-diff") && !string.IsNullOrEmpty(argsDic["--out-diff"]))
+                {
+                    try
+                    {
+                        string diff = BuildElementDiff(res);
+                        File.WriteAllText(argsDic["--out-diff"], diff);
+                        Console.WriteLine($"Diff written to: {argsDic["--out-diff"]}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"Error: could not write --out-diff '{argsDic["--out-diff"]}': {ex.Message}");
+                        return 1;
+                    }
+                }
+
+                Console.WriteLine("NeedsRebuild=true");
+                return 0;
+            }
+
+            // Failure: route to advisory (2) vs error (1) exit codes.
+            switch (res.Status)
+            {
+                case DecompSourceWriteStatus.NotOwned:
+                case DecompSourceWriteStatus.RomOnly:
+                case DecompSourceWriteStatus.Manual:
+                case DecompSourceWriteStatus.UnsupportedField:
+                case DecompSourceWriteStatus.Rejected:
+                case DecompSourceWriteStatus.MalformedManifest:
+                case DecompSourceWriteStatus.NotDecompMode:
+                    Console.Error.WriteLine($"ROM-only / manual / not owned: {res.Message}");
+                    return 2;
+                default:
+                    Console.Error.WriteLine($"Error: {res.Message}");
+                    return 1;
+            }
+        }
+
+        // ---- --write-source helpers ----
+
+        static bool TryParseIntArg(string s, out int result)
+        {
+            result = 0;
+            if (string.IsNullOrEmpty(s)) return false;
+            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                return int.TryParse(s.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out result);
+            return int.TryParse(s, out result);
+        }
+
+        static bool TryParseUIntArg(string s, out uint result)
+        {
+            result = 0;
+            if (string.IsNullOrEmpty(s)) return false;
+            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                return uint.TryParse(s.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out result);
+            return uint.TryParse(s, out result);
+        }
+
+        /// <summary>
+        /// Extract ordered <c>--field=X --value=Y</c> pairs from the raw argv (#1141).
+        /// Each <c>--field</c> must be paired with a FOLLOWING <c>--value</c> (in argv
+        /// order); other flags may appear between them — only a SECOND <c>--field</c>
+        /// arriving before its <c>--value</c>, an unpaired trailing <c>--field</c>, or a
+        /// <c>--value</c> with no preceding <c>--field</c>, is a usage error. Last value
+        /// wins on a duplicate field (a warning is printed to stderr). Supports both
+        /// <c>--field=X</c> and <c>--field X</c> spellings.
+        /// </summary>
+        static bool TryExtractFieldValuePairs(
+            string[] args, out Dictionary<string, uint> result, out string error)
+        {
+            result = new Dictionary<string, uint>(StringComparer.Ordinal);
+            error = "";
+            string pendingField = null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                string a = args[i];
+                if (!a.StartsWith("--field", StringComparison.Ordinal)
+                    && !a.StartsWith("--value", StringComparison.Ordinal))
+                    continue;
+
+                bool isField = a.StartsWith("--field", StringComparison.Ordinal);
+                bool isValue = a.StartsWith("--value", StringComparison.Ordinal);
+                // Only accept exact "--field"/"--value" or "--field=..."/"--value=..."
+                string key = isField ? "--field" : "--value";
+                if (a.Length != key.Length && (a.Length <= key.Length || a[key.Length] != '='))
+                    continue;   // e.g. --fieldfoo — not our flag
+
+                // Resolve the value for this flag (inline =VALUE, or next argv token).
+                string val;
+                int eq = a.IndexOf('=');
+                if (eq >= 0)
+                {
+                    val = a.Substring(eq + 1);
+                }
+                else
+                {
+                    if (i + 1 >= args.Length || args[i + 1].StartsWith("-", StringComparison.Ordinal))
+                    { error = $"{key} requires a value"; return false; }
+                    val = args[i + 1];
+                    i++;
+                }
+
+                if (isField)
+                {
+                    if (pendingField != null)
+                    { error = $"--field={pendingField} has no matching --value"; return false; }
+                    if (string.IsNullOrEmpty(val))
+                    { error = "--field requires a non-empty name"; return false; }
+                    pendingField = val;
+                }
+                else // isValue
+                {
+                    if (pendingField == null)
+                    { error = "--value has no preceding --field"; return false; }
+                    if (!TryParseUIntArg(val, out uint num))
+                    { error = $"Invalid --value: {val}"; return false; }
+                    if (result.ContainsKey(pendingField))
+                        Console.Error.WriteLine($"Warning: --field={pendingField} given twice; last value ({num}) wins.");
+                    result[pendingField] = num;
+                    pendingField = null;
+                }
+            }
+
+            if (pendingField != null)
+            { error = $"--field={pendingField} has no matching --value"; return false; }
+            return true;
+        }
+
+        static string BuildElementDiff(DecompSourceWriteResult res)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"--- {res.SourceFile} (before) entry {res.EntryId}");
+            sb.AppendLine($"+++ {res.SourceFile} (after)  entry {res.EntryId}");
+            foreach (string line in (res.BeforeText ?? "").Replace("\r\n", "\n").Split('\n'))
+                sb.AppendLine("-" + line);
+            foreach (string line in (res.AfterText ?? "").Replace("\r\n", "\n").Split('\n'))
+                sb.AppendLine("+" + line);
+            return sb.ToString();
         }
 
         static int RunExportPalette(Dictionary<string, string> argsDic)

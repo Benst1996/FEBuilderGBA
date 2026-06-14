@@ -50,6 +50,8 @@
 
             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
               <Button AutomationProperties.AutomationId="TextViewer_WriteText_Button" Name="WriteTextButton" Content="Write Text" />
+              <Button AutomationProperties.AutomationId="TextViewer_InsertEscapeCode_Button" Name="InsertEscapeCodeButton" Content="Insert Escape Code" />
+              <Button AutomationProperties.AutomationId="TextViewer_JumpToPortrait_Button" Name="JumpToPortraitButton" Content="Jump to Portrait" />
               <TextBlock AutomationProperties.AutomationId="TextViewer_WriteStatus_Label" Name="WriteStatusLabel" VerticalAlignment="Center" Foreground="Gray" />
             </StackPanel>
 
@@ -131,20 +133,22 @@
               <Button AutomationProperties.AutomationId="TextViewer_Import_Button" Name="ImportButton" Content="Import Texts (TSV)" Click="OnImportClick" />
             </StackPanel>
 
-            <!-- Export Filter stub (DISABLED — depends on ToolTranslateROM Core extraction) -->
+            <!-- Export Filter (#1028 Slice B) — filters the TSV export to a single
+                 WF MakeVarsIDArray category (faithful WF parity). Index 0 = All. -->
             <StackPanel Orientation="Horizontal" Spacing="6">
               <TextBlock AutomationProperties.AutomationId="TextViewer_ExportFilterPrefix_Label"
                          Text="Export Filter:" VerticalAlignment="Center" Width="140" />
               <ComboBox AutomationProperties.AutomationId="TextViewer_ExportFilter_Combo"
-                        Name="ExportFilterCombo" IsEnabled="False" Width="240"
-                        PlaceholderText="(out-of-scope)"
-                        ToolTip.Tip="Out-of-scope: requires ToolTranslateROM Core extraction" />
+                        Name="ExportFilterCombo" Width="240" SelectedIndex="0"
+                        ToolTip.Tip="Filter the TSV export to a single text category (WF parity)." />
             </StackPanel>
 
-            <!-- Include AI Hints stub (DISABLED) -->
+            <!-- Include AI Hints (#1028 Slice C): when checked, the TSV export
+                 appends per-entry unit translate-info lines for every face the
+                 text loads (WF ToolTranslateROM.AppendAIHintMessage). -->
             <CheckBox AutomationProperties.AutomationId="TextViewer_IncludeAIHints_Check"
-                      Name="IncludeAIHintsCheck" Content="Include AI Hints" IsEnabled="False"
-                      ToolTip.Tip="Out-of-scope: requires ToolTranslateROM Core extraction" />
+                      Name="IncludeAIHintsCheck" Content="Include AI Hints"
+                      ToolTip.Tip="Append unit translate-info hints (name/role/flags) for every face the text loads." />
 
             <!-- Export Limit descriptor (read-only descriptive TextBox) -->
             <StackPanel Orientation="Horizontal" Spacing="6">
@@ -157,7 +161,9 @@
         </ScrollViewer>
       </TabItem>
 
-      <!-- Tab 4: Translate — disabled stub (mirror WF translatePage) -->
+      <!-- Tab 4: Translate — online machine-translation of the selected text
+           (mirror WF translatePage). Combos are populated + defaults selected
+           in code-behind from the shared ToolTranslateROM language arrays. -->
       <TabItem Header="Translate" Name="TranslateTab" AutomationProperties.AutomationId="TextViewer_Translate_Tab">
         <ScrollViewer Margin="4">
           <StackPanel Spacing="10" Margin="8">
@@ -167,26 +173,30 @@
               <TextBlock AutomationProperties.AutomationId="TextViewer_TranslateFromPrefix_Label"
                          Text="Translate from:" VerticalAlignment="Center" Width="160" />
               <ComboBox AutomationProperties.AutomationId="TextViewer_TranslateFrom_Combo"
-                        Name="TranslateFromCombo" IsEnabled="False" Width="240"
-                        ToolTip.Tip="Out-of-scope: requires UX review of SaaS-call disclaimer" />
+                        Name="TranslateFromCombo" Width="240"
+                        ToolTip.Tip="Source language of the currently-selected text" />
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" Spacing="6">
               <TextBlock AutomationProperties.AutomationId="TextViewer_TranslateToPrefix_Label"
                          Text="Translate to:" VerticalAlignment="Center" Width="160" />
               <ComboBox AutomationProperties.AutomationId="TextViewer_TranslateTo_Combo"
-                        Name="TranslateToCombo" IsEnabled="False" Width="240"
-                        ToolTip.Tip="Out-of-scope: requires UX review of SaaS-call disclaimer" />
+                        Name="TranslateToCombo" Width="240"
+                        ToolTip.Tip="Target language to translate the selected text into" />
             </StackPanel>
 
-            <Button AutomationProperties.AutomationId="TextViewer_Translate_Button"
-                    Name="TranslateButton" Content="Translate" IsEnabled="False"
-                    ToolTip.Tip="Out-of-scope: requires UX review of SaaS-call disclaimer" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button AutomationProperties.AutomationId="TextViewer_Translate_Button"
+                      Name="TranslateButton" Content="Translate"
+                      ToolTip.Tip="Translate the selected text online; the result is placed in the Edit box for review before writing" />
+              <TextBlock AutomationProperties.AutomationId="TextViewer_TranslateStatus_Label"
+                         Name="TranslateStatusLabel" VerticalAlignment="Center" Foreground="Gray" />
+            </StackPanel>
           </StackPanel>
         </ScrollViewer>
       </TabItem>
 
-      <!-- Tab 5: References — list of cross-refs + (disabled) Add Reference (mirror WF RefPage) -->
+      <!-- Tab 5: References — list of cross-refs + Add Reference (mirror WF RefPage) -->
       <TabItem Header="References" Name="ReferencesTab" AutomationProperties.AutomationId="TextViewer_References_Tab">
         <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="4">
           <TextBlock Grid.Row="0" AutomationProperties.AutomationId="TextViewer_ReferencesPrefix_Label"
@@ -196,9 +206,9 @@
                      Name="ReferencesTabList" />
           </Border>
           <Button Grid.Row="2" AutomationProperties.AutomationId="TextViewer_AddReference_Button"
-                  Name="AddReferenceButton" Content="Add Reference" IsEnabled="False"
+                  Name="AddReferenceButton" Content="Add Reference" IsEnabled="True"
                   Margin="4,8,4,4"
-                  ToolTip.Tip="Out-of-scope: requires UseTextIDCache.Update Core extraction" />
+                  Click="OnAddReferenceClick" />
           <TextBlock Grid.Row="3" AutomationProperties.AutomationId="TextViewer_ReferencesTabStatus_Label"
                      Name="ReferencesTabStatusLabel" Margin="4,4,4,4" Foreground="Gray" />
         </Grid>

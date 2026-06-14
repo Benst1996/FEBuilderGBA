@@ -11,12 +11,23 @@
 //     16 ushort entries through rom.write_u16(...) so an ambient
 //     UndoService.Begin scope captures them.
 //
+// RESOLVED (#808): BattleCanvasRender — RenderMainImage delegates to
+//   ImageTSAEditorCore.TryRenderMainImage (read-only TSA-composited main image).
+// RESOLVED (#819): ChipsetListRender — RenderChipList delegates to
+//   ImageTSAEditorCore.RenderChipList (read-only orig/Hflip/Vflip/HVflip strip).
+//
 // Out-of-scope (KnownGap markers in the AXAML cover the labels-sweep audit):
-//   - BattleCanvasRender    — live LZ77 + TSA blit through ImageUtil.BitBlt
-//   - ChipsetListRender     — permuted (orig / Hflip / Vflip / HVflip) chipset
 //   - TSAByteWrite          — ImageFormRef.WriteImageData pointer-aware realloc
 //   - PaletteToClipboard    — system clipboard interop (WinForms-only API)
-//   - MainImageImportExport — image1_Import / image1_Export through ImageFormRef
+//   - MainImageExport       — image1_Export raw-tilesheet PNG export (deferred)
+// RESOLVED (#901): MainImageImport — image1_Import wired tilesheet-only via
+//   TSAImageImportCore.ImportTSAImage (SAME-SIZE PNG -> EncodeDirectTiles4bpp
+//   -> LZ77 -> repoint ONLY the ZImg pointer; TSA + palette untouched).
+// RESOLVED (#1071): HEADER-TSA per-cell editing — PopulateCells now also decodes
+//   header-TSA (32-wide bottom-to-top stride via ImageTSAEditorCore.DecodeHeaderTsaCells),
+//   the editable region is constrained to the header region (x<=masterHeaderX,
+//   y<=masterHeaderY), and WriteTsa branches to WriteHeaderTsaCells preserving the
+//   original {masterHeaderX, masterHeaderY}.
 using System;
 using System.Collections.Generic;
 
@@ -45,6 +56,18 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         uint _palettePointer;
         uint _paletteAddress;
         int _paletteCount;
+
+        // Per-cell TSA editing (#1005/#1071). For NON-header TSA, _cells is the
+        // clean row-major width8*height8 grid. For HEADER-TSA (#1071), _cells is
+        // the 32-wide bottom-to-top-stride tile array (sized to the canvas) and
+        // _isHeaderCells is set; the editable region is then constrained to
+        // x <= _masterHeaderX && y <= _masterHeaderY. Left null (HasCells=false)
+        // only when no valid grid/header decoded.
+        ushort[] _cells;
+        int _maxTileId;
+        bool _isHeaderCells;
+        int _masterHeaderX;
+        int _masterHeaderY;
 
         /// <summary>Currently selected entry address (kept for IEditorView contract).</summary>
         public uint CurrentAddr { get => _currentAddr; set => SetField(ref _currentAddr, value); }
@@ -91,6 +114,75 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         /// <summary>Number of palette slots to expose to the UI (clamps the slot combo).</summary>
         public int PaletteCount => _paletteCount;
 
+        // ---- Per-cell TSA editing (#1005 non-header / #1071 header) ----
+
+        /// <summary>True when the TSA decoded into an editable cell grid
+        /// (non-header row-major OR a valid header decode).</summary>
+        public bool HasCells => _cells != null;
+
+        /// <summary>True when the loaded cell grid is a HEADER-TSA 32-wide
+        /// bottom-to-top-stride array (#1071), false for the non-header
+        /// row-major grid (#1005).</summary>
+        public bool IsHeaderCells => _isHeaderCells;
+
+        /// <summary>Cell grid columns (= Width8). 0 when no cells are loaded.</summary>
+        public int CellCols => _cells != null ? (int)_width8 : 0;
+
+        /// <summary>Cell grid rows (= Height8). 0 when no cells are loaded.</summary>
+        public int CellRows => _cells != null ? (int)_height8 : 0;
+
+        /// <summary>
+        /// Highest editable X for HEADER-TSA = <c>masterHeaderX</c> (the header
+        /// region within the min-clamped canvas), CLAMPED to the in-grid maximum
+        /// <c>CellCols-1</c> so the View can never expose an out-of-grid X
+        /// (Copilot review on #1071). For non-header TSA the whole row-major grid
+        /// is editable, so this is <c>CellCols-1</c>. 0 when no cells are loaded.
+        /// </summary>
+        public int HeaderMaxX => _cells == null ? 0
+            : (_isHeaderCells
+                ? Math.Min(_masterHeaderX, Math.Max(0, CellCols - 1))
+                : Math.Max(0, CellCols - 1));
+
+        /// <summary>
+        /// Highest editable Y for HEADER-TSA = <c>masterHeaderY</c>, CLAMPED to
+        /// the in-grid maximum <c>CellRows-1</c> (Copilot review on #1071). For
+        /// non-header TSA this is <c>CellRows-1</c>. 0 when no cells are loaded.
+        /// </summary>
+        public int HeaderMaxY => _cells == null ? 0
+            : (_isHeaderCells
+                ? Math.Min(_masterHeaderY, Math.Max(0, CellRows - 1))
+                : Math.Max(0, CellRows - 1));
+
+        /// <summary>
+        /// Highest editable tile id = <c>min(0x3FF, tilesheetTileCount-1)</c>.
+        /// Exposed so the View can clamp the Tile ID NumericUpDown. 0 when no
+        /// cells / tilesheet are loaded.
+        /// </summary>
+        public int MaxTileId => _maxTileId;
+
+        /// <summary>
+        /// True when per-cell editing is available: the TSA decoded into a cell
+        /// grid (non-header row-major #1005 OR a valid header decode #1071).
+        /// </summary>
+        public bool CanEditCells => HasCells;
+
+        /// <summary>
+        /// True when cell (<paramref name="x"/>, <paramref name="y"/>) is inside
+        /// the editable region. For HEADER-TSA the region is constrained to
+        /// <c>x &lt;= masterHeaderX &amp;&amp; y &lt;= masterHeaderY</c> (the
+        /// header region within the min-clamped canvas) — cells outside it are
+        /// display-only and MUST NOT be edited (Copilot review on #1071). For
+        /// non-header TSA every in-grid cell is editable.
+        /// </summary>
+        public bool IsCellEditable(int x, int y)
+        {
+            if (_cells == null) return false;
+            if (x < 0 || y < 0 || x >= CellCols || y >= CellRows) return false;
+            if (_isHeaderCells)
+                return x <= _masterHeaderX && y <= _masterHeaderY;
+            return true;
+        }
+
         public ImageTSAEditorViewModel()
         {
             _palettePointer = U.NOT_FOUND;
@@ -136,6 +228,165 @@ namespace FEBuilderGBA.Avalonia.ViewModels
 
             IsContextLoaded = true;
             IsLoaded = true;
+
+            // Per-cell TSA editing (#1005 non-header / #1071 header): decode the
+            // TSA into an editable cell grid + compute the tile-id clamp. For
+            // header-TSA the editable region is constrained to the header region
+            // (x <= masterHeaderX && y <= masterHeaderY); a corrupt header leaves
+            // _cells null (HasCells / CanEditCells false).
+            PopulateCells();
+        }
+
+        /// <summary>
+        /// Decode the current TSA into the editable <c>_cells</c> grid and
+        /// compute <see cref="MaxTileId"/>. For NON-header TSA (#1005) this is a
+        /// clean row-major width8*height8 grid; for HEADER-TSA (#1071) it is the
+        /// 32-wide bottom-to-top-stride tile array with the decoded header dims.
+        /// No-op (clears the grid) for an unset image/TSA slot, a corrupt header,
+        /// or any out-of-bounds input. Invoked from <see cref="Init"/>.
+        /// </summary>
+        void PopulateCells()
+        {
+            PopulateCellsCore();
+
+            // Raise PropertyChanged for every computed cell property (#1071,
+            // Copilot review): PopulateCells mutates backing fields directly, so
+            // the View's `IsEnabled="{Binding CanEditCells}"` (and the other cell
+            // bindings) would latch the constructor-time false and never update
+            // when a valid context is injected via Init. Always notify (success
+            // OR the reset/no-cells path) so the bound panel enables once a valid
+            // grid decodes and re-disables if it later clears.
+            RaiseCellPropertiesChanged();
+        }
+
+        /// <summary>
+        /// The field-mutating body of <see cref="PopulateCells"/>: reset the cell
+        /// state, then decode (header or non-header) and set the backing fields.
+        /// Returns on the first guard so PopulateCells can fire ONE notification
+        /// on every exit path.
+        /// </summary>
+        void PopulateCellsCore()
+        {
+            _cells = null;
+            _maxTileId = 0;
+            _isHeaderCells = false;
+            _masterHeaderX = 0;
+            _masterHeaderY = 0;
+
+            if (_zimgPointer == U.NOT_FOUND) return;
+            if (_tsaPointer == U.NOT_FOUND) return;
+
+            ROM rom = CoreState.ROM;
+            if (rom == null) return;
+
+            uint imageAddr = rom.p32(_zimgPointer);
+            uint tsaAddr = rom.p32(_tsaPointer);
+
+            ushort[] cells;
+            if (_isHeaderTSA)
+            {
+                // #1071: header-TSA decode-to-cells (32-wide bottom-to-top
+                // stride). DecodeHeaderTsaCells returns null for a corrupt /
+                // unreadable / un-editable header, so the panel only enables for
+                // a valid, round-trippable one.
+                cells = ImageTSAEditorCore.DecodeHeaderTsaCells(
+                    rom, _width8, _height8, _isLZ77TSA, tsaAddr,
+                    out int mhx, out int mhy);
+                if (cells == null) return;
+                _isHeaderCells = true;
+                _masterHeaderX = mhx;
+                _masterHeaderY = mhy;
+            }
+            else
+            {
+                cells = ImageTSAEditorCore.DecodeTsaCells(
+                    rom, _width8, _height8, _isLZ77TSA, tsaAddr);
+                if (cells == null) return;
+            }
+
+            int tileCount = ImageTSAEditorCore.GetTilesheetTileCount(rom, imageAddr);
+            // Clamp tile-id range to [0, min(0x3FF, tilesheetTileCount-1)]. When
+            // the tilesheet can't be read (tileCount 0), fall back to the GBA
+            // 10-bit hardware max so the panel stays usable.
+            _maxTileId = tileCount > 0 ? Math.Min(0x3FF, tileCount - 1) : 0x3FF;
+            _cells = cells;
+        }
+
+        /// <summary>
+        /// Fire <c>PropertyChanged</c> for every computed cell property so the
+        /// View's bindings refresh after <see cref="PopulateCells"/> mutates the
+        /// backing fields (Copilot review on #1071). Called at the end of
+        /// PopulateCells (success path) and from the leading reset so a transition
+        /// from "had cells" to "no cells" also re-disables the bound panel.
+        /// </summary>
+        void RaiseCellPropertiesChanged()
+        {
+            OnPropertyChanged(nameof(HasCells));
+            OnPropertyChanged(nameof(IsHeaderCells));
+            OnPropertyChanged(nameof(CellCols));
+            OnPropertyChanged(nameof(CellRows));
+            OnPropertyChanged(nameof(HeaderMaxX));
+            OnPropertyChanged(nameof(HeaderMaxY));
+            OnPropertyChanged(nameof(MaxTileId));
+            OnPropertyChanged(nameof(CanEditCells));
+        }
+
+        /// <summary>
+        /// Map editor coordinates (<paramref name="x"/>, <paramref name="y"/>) to
+        /// the backing <c>_cells</c> array index. For non-header TSA the grid is
+        /// row-major with stride <see cref="CellCols"/>. For HEADER-TSA the cells
+        /// live in a 32-wide bottom-to-top stride, so a header cell
+        /// (<c>headerx=x, headery=y</c>) maps to
+        /// <c>n = (masterHeaderY - y) * 32 + x</c> — the EXACT index the shared
+        /// decode/serialize stride fills (#1071). Returns -1 for an out-of-range
+        /// index.
+        /// </summary>
+        int CellIndex(int x, int y)
+        {
+            if (_isHeaderCells)
+            {
+                int n = (_masterHeaderY - y) * 32 + x;
+                if (n < 0 || _cells == null || n >= _cells.Length) return -1;
+                return n;
+            }
+            int idx = y * CellCols + x;
+            if (_cells == null || idx < 0 || idx >= _cells.Length) return -1;
+            return idx;
+        }
+
+        /// <summary>
+        /// Read the GBA screen-entry u16 at cell (<paramref name="x"/>,
+        /// <paramref name="y"/>). Returns 0 for out-of-range coordinates or when
+        /// no cells are loaded.
+        /// </summary>
+        public ushort GetCell(int x, int y)
+        {
+            if (_cells == null) return 0;
+            if (x < 0 || y < 0 || x >= CellCols || y >= CellRows) return 0;
+            int idx = CellIndex(x, y);
+            if (idx < 0) return 0;
+            return _cells[idx];
+        }
+
+        /// <summary>
+        /// Bit-pack a tile id + flip flags + palette bank into cell
+        /// (<paramref name="x"/>, <paramref name="y"/>). The tile id is clamped
+        /// to <c>[0, MaxTileId]</c>, the bank to <c>[0, 15]</c>. No-op for
+        /// out-of-range coordinates, when no cells are loaded, or — for
+        /// HEADER-TSA — when the cell is OUTSIDE the editable header region
+        /// (<see cref="IsCellEditable"/>), so an out-of-header cell can never be
+        /// silently edited via code-behind (Copilot review on #1071).
+        /// </summary>
+        public void SetCell(int x, int y, int tileId, bool hflip, bool vflip, int bank)
+        {
+            if (_cells == null) return;
+            if (!IsCellEditable(x, y)) return;
+            int idx = CellIndex(x, y);
+            if (idx < 0) return;
+            int clampedTile = Math.Clamp(tileId, 0, Math.Max(0, _maxTileId));
+            int clampedBank = Math.Clamp(bank, 0, 0xF);
+            _cells[idx] =
+                ImageTSAEditorCore.SerializeCell(clampedTile, hflip, vflip, clampedBank);
         }
 
         /// <summary>
@@ -185,9 +436,125 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             uint tsaAddr = rom.p32(_tsaPointer);
             uint paletteAddr = ResolveActivePaletteAddress();
 
+            // Per-cell editing (#1005/#1071): when an editable cell grid is
+            // loaded, render from the IN-MEMORY cells so the preview reflects
+            // unsaved edits. Header-TSA uses the 32-wide-stride render path;
+            // non-header uses the row-major path. Otherwise fall back to the
+            // read-only ROM path.
+            if (HasCells)
+            {
+                if (_isHeaderCells)
+                {
+                    return ImageTSAEditorCore.RenderHeaderMainImageFromCells(
+                        rom, _width8, _height8, imageAddr, _cells,
+                        _masterHeaderX, _masterHeaderY, paletteAddr);
+                }
+                return ImageTSAEditorCore.RenderMainImageFromCells(
+                    rom, _width8, _height8, imageAddr, _cells, paletteAddr);
+            }
+
             return ImageTSAEditorCore.TryRenderMainImage(
                 rom, _width8, _height8, imageAddr,
                 _isHeaderTSA, _isLZ77TSA, tsaAddr, paletteAddr);
+        }
+
+        /// <summary>
+        /// Write the edited TSA cells back to ROM. For NON-header TSA (#1005)
+        /// delegates to <see cref="ImageTSAEditorCore.WriteTsaCells"/>; for
+        /// HEADER-TSA (#1071) delegates to
+        /// <see cref="ImageTSAEditorCore.WriteHeaderTsaCells"/>, serializing the
+        /// 32-wide-stride tile array while preserving the ORIGINAL
+        /// <c>{masterHeaderX, masterHeaderY}</c>. Resolves the TSA pointer SLOT
+        /// (for the LZ77 repoint path) and the resolved data address (for the raw
+        /// in-place path). Must run inside the caller's ambient
+        /// UndoService.Begin / Commit scope. Returns "" on success or a localized
+        /// error string (with ZERO surviving mutation on any failure — see the
+        /// defensive snapshot restore in both write helpers).
+        /// </summary>
+        public string WriteTsa()
+        {
+            if (!CanEditCells) return R._("Per-cell TSA editing is not available.");
+
+            ROM rom = CoreState.ROM;
+            if (rom == null) return R._("ROM is not loaded.");
+            if (_tsaPointer == U.NOT_FOUND) return R._("The TSA pointer is not set.");
+
+            // _tsaPointer is the POINTER SLOT (RenderMainImage resolves it via
+            // rom.p32). The LZ77 path repoints the slot; the raw path overwrites
+            // the resolved data address in place.
+            uint tsaDataAddr = rom.p32(_tsaPointer);
+
+            if (_isHeaderCells)
+            {
+                return ImageTSAEditorCore.WriteHeaderTsaCells(
+                    rom, _cells, _masterHeaderX, _masterHeaderY,
+                    _isLZ77TSA, _tsaPointer, tsaDataAddr);
+            }
+
+            return ImageTSAEditorCore.WriteTsaCells(
+                rom, _width8, _height8, _isLZ77TSA, _tsaPointer, tsaDataAddr, _cells);
+        }
+
+        /// <summary>
+        /// Render the chip-list thumbnail (read-only) for the
+        /// <c>ChipListPreview</c> control (#819). Resolves the SAME image +
+        /// palette addresses as <see cref="RenderMainImage"/> (the chip list is
+        /// a pure tile-strip, so there is NO TSA pointer) and delegates to
+        /// <see cref="ImageTSAEditorCore.RenderChipList"/>.
+        ///
+        /// Returns null (no throw) when there is no context, when the image
+        /// pointer slot is unset (U.NOT_FOUND), or when the underlying render
+        /// fails. A NOT_FOUND palette pointer is NOT a failure — it is the
+        /// expected raw-address fallback handled by
+        /// <see cref="ResolveActivePaletteAddress"/>.
+        /// </summary>
+        public IImage RenderChipList()
+        {
+            if (!IsContextLoaded) return null;
+
+            // The image pointer slot must be real before we follow it with p32;
+            // only the palette pointer has a raw-address fallback. The chip list
+            // never reads the TSA stream, so _tsaPointer is irrelevant here.
+            if (_zimgPointer == U.NOT_FOUND) return null;
+
+            ROM rom = CoreState.ROM;
+            if (rom == null) return null;
+
+            uint imageAddr = rom.p32(_zimgPointer);
+            uint paletteAddr = ResolveActivePaletteAddress();
+
+            return ImageTSAEditorCore.RenderChipList(rom, imageAddr, paletteAddr);
+        }
+
+        /// <summary>
+        /// Render the RAW tilesheet (read-only) for the Main Image tab's
+        /// "Image Export" PNG (#974). Resolves the SAME image + palette
+        /// addresses as <see cref="RenderChipList"/> (the raw tilesheet is a
+        /// pure tile-strip, so there is NO TSA pointer) and delegates to
+        /// <see cref="ImageTSAEditorCore.RenderRawTilesheet"/>.
+        ///
+        /// Returns null (no throw) when there is no context, when the image
+        /// pointer slot is unset (U.NOT_FOUND), or when the underlying render
+        /// fails. A NOT_FOUND palette pointer is NOT a failure — it is the
+        /// expected raw-address fallback handled by
+        /// <see cref="ResolveActivePaletteAddress"/>.
+        /// </summary>
+        public IImage RenderRawTilesheet()
+        {
+            if (!IsContextLoaded) return null;
+
+            // The image pointer slot must be real before we follow it with p32;
+            // only the palette pointer has a raw-address fallback. The raw
+            // tilesheet never reads the TSA stream, so _tsaPointer is irrelevant.
+            if (_zimgPointer == U.NOT_FOUND) return null;
+
+            ROM rom = CoreState.ROM;
+            if (rom == null) return null;
+
+            uint imageAddr = rom.p32(_zimgPointer);
+            uint paletteAddr = ResolveActivePaletteAddress();
+
+            return ImageTSAEditorCore.RenderRawTilesheet(rom, imageAddr, paletteAddr);
         }
 
         /// <summary>
@@ -318,6 +685,34 @@ namespace FEBuilderGBA.Avalonia.ViewModels
             int g5 = (g >> 3) & 0x1F;
             int b5 = (b >> 3) & 0x1F;
             return (ushort)((b5 << 10) | (g5 << 5) | r5);
+        }
+
+        /// <summary>
+        /// Build the palette-to-clipboard hex string (#974): a 64-character
+        /// string of 16 entries, 4 big-endian hex chars each. Mirrors WinForms
+        /// <c>PaletteFormRef.PALETTE_TO_CLIPBOARD_BUTTON_Click</c>, which packs
+        /// each entry to its raw GBA bytes and formats with
+        /// <c>U.big16(...).ToString("X04")</c>. <c>U.big16</c> byte-swaps the
+        /// little-endian GBA 5-5-5 word into a big-endian display value, so the
+        /// emitted hex equals <c>byteswap(PackRgb555(...))</c> — e.g. white
+        /// (0x7FFF, LE bytes FF 7F) renders as "FF7F".
+        /// </summary>
+        /// <param name="rgb">Exactly 16 RGB triplets (the current palette UI).</param>
+        internal static string BuildPaletteClipboardHex((byte R, byte G, byte B)[] rgb)
+        {
+            if (rgb == null) throw new ArgumentNullException(nameof(rgb));
+            if (rgb.Length != 16)
+                throw new ArgumentException("BuildPaletteClipboardHex expects exactly 16 entries", nameof(rgb));
+
+            var sb = new System.Text.StringBuilder(64);
+            for (int i = 0; i < 16; i++)
+            {
+                ushort word = PackRgb555(rgb[i].R, rgb[i].G, rgb[i].B);
+                // U.big16-equivalent byte-swap of the little-endian GBA word.
+                uint big = (uint)(((word & 0xFF) << 8) | (word >> 8));
+                sb.Append(big.ToString("X04"));
+            }
+            return sb.ToString();
         }
 
         /// <summary>

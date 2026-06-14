@@ -399,6 +399,57 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         }
 
         /// <summary>
+        /// Expand the magic-effect pointer table (table-1) AND the CSA spell
+        /// table (table-2) to the fixed <see cref="MagicListExpandCore.NewCount"/>
+        /// (254) rows via the all-reference path
+        /// (<see cref="MagicListExpandCore.ExpandMagicLists"/> →
+        /// <see cref="DataExpansionCore.ExpandTableTo"/> +
+        /// <see cref="DataExpansionCore.RepointAllReferences"/>). Mirrors WF
+        /// <c>ImageMagicFEditorForm.MagicListExpandsButton_Click</c> (#837).
+        ///
+        /// <para>The CSA spell-table-pointer discovery + NOT_FOUND clean-abort
+        /// runs FIRST inside the Core helper (before the table-1 expand), so a
+        /// ROM without the CSA table is rejected with ZERO mutation.</para>
+        ///
+        /// <para>Table-1 current count = <see cref="ImageUtilMagicCore.GetSpellDataCount"/>
+        /// (WF <c>ImageUtilMagicFEditor.SpellDataCount()</c>); table-2 current
+        /// count = the displayed list row count (WF <c>InputFormRef.DataCount</c>).
+        /// Refreshes patch state first so both counts reflect the current ROM.</para>
+        /// </summary>
+        /// <param name="undo">Active undo buffer (from the caller's
+        /// <c>UndoService.GetActiveUndoData()</c>) so the all-reference repoint
+        /// records into the same transaction.</param>
+        /// <returns>Empty string on success, an error message otherwise (no
+        /// mutation past the failure point; none at all on CSA NOT_FOUND).</returns>
+        public string ExpandMagicLists(Undo.UndoData undo)
+        {
+            ROM rom = CoreState.ROM;
+            if (rom?.RomInfo == null) return R._("ROM not loaded.");
+
+            // Ensure the spell-data count + CSA-table state reflect the ROM.
+            RefreshPatchState();
+
+            // table-1 current count = magic-effect spell-data count.
+            uint magicEffectCurrentCount = ImageUtilMagicCore.GetSpellDataCount(rom);
+            // table-2 current count = the displayed list row count (WF
+            // InputFormRef.DataCount). LoadList walks the CSA spell table with
+            // the same predicate the editor displays.
+            uint csaCurrentCount = (uint)LoadList().Count;
+
+            var result = MagicListExpandCore.ExpandMagicLists(
+                rom, magicEffectCurrentCount, csaCurrentCount, undo);
+            if (!result.Success)
+                return result.Error ?? R._("Table expansion failed.");
+
+            // NOTE B: refresh the cached spell-data count from the grown table.
+            // GetSpellDataCount stops at the 0xFFFFFFFF terminator ExpandTableTo
+            // wrote (counting the zero-filled NULL rows via isPointerOrNULL), so
+            // it reports the grown count — no re-scan undercount.
+            _spellDataCount = ImageUtilMagicCore.GetSpellDataCount(rom);
+            return "";
+        }
+
+        /// <summary>
         /// Original per-version magic count (e.g. FE8U=0x48). Used by
         /// the view to show/hide the List Expansion button.
         /// </summary>
@@ -412,6 +463,48 @@ namespace FEBuilderGBA.Avalonia.ViewModels
         }
 
         public int GetListCount() => LoadList().Count;
+
+        // ------------------------------------------------------------------
+        // #852 — Magic-effect frame preview + read-only Export PNG.
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Render the currently-selected magic-effect frame using the live
+        /// P0/Frame/P4/P12 values. Mirrors WF
+        /// <c>ImageMagicFEditorForm.DrawSelectedAnime()</c>:
+        /// <c>ImageUtilMagicFEditor.Draw((uint)ShowFrameUpDown.Value, (uint)P0.Value,
+        /// (uint)P4.Value, (uint)P12.Value, out log)</c>.
+        ///
+        /// <para>Returns <c>null</c> when no magic system is detected, when the
+        /// ROM is not loaded, or on any bad pointer / decompression failure.</para>
+        /// </summary>
+        /// <param name="log">Diagnostic text from the renderer
+        ///   (<c>MagicEffectRendererCore.RenderMagicFrame</c>).</param>
+        /// <returns>A 240×128 <see cref="IImage"/>, or <c>null</c>.</returns>
+        public IImage RenderMagicFramePreview(out string log)
+        {
+            log = string.Empty;
+            ROM rom = CoreState.ROM;
+            if (rom == null)
+            {
+                log = "ROM not loaded.";
+                return null;
+            }
+            if (!_magicSystemDetected)
+            {
+                log = "No magic system patch detected.";
+                return null;
+            }
+            return MagicEffectRendererCore.RenderMagicFrame(
+                rom, _p0, _frame, _p4, _p12, out log);
+        }
+
+        /// <summary>
+        /// True when <see cref="RenderMagicFramePreview"/> can produce a
+        /// non-null image (i.e. the magic system is detected and the entry
+        /// is loaded). Used to gate the Export PNG button.
+        /// </summary>
+        public bool CanExportMagicFrame => _magicSystemDetected && _isLoaded;
 
         public Dictionary<string, string> GetDataReport()
         {

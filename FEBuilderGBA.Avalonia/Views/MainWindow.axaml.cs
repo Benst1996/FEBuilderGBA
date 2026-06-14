@@ -6,9 +6,11 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using global::Avalonia;
+using global::Avalonia.Automation;
 using global::Avalonia.Controls;
 using global::Avalonia.Input;
 using global::Avalonia.Interactivity;
+using global::Avalonia.LogicalTree;
 using global::Avalonia.Media.Imaging;
 using global::Avalonia.Platform.Storage;
 using global::Avalonia.Threading;
@@ -218,6 +220,7 @@ namespace FEBuilderGBA.Avalonia.Views
             // File sub-items
             if (OpenRomMenuItem != null) OpenRomMenuItem.Header = R._("_Open ROM...");
             if (OpenLastRomMenuItem != null) OpenLastRomMenuItem.Header = R._("Open _Last ROM");
+            if (OpenDecompProjectMenuItem != null) OpenDecompProjectMenuItem.Header = R._("Open _Decomp Project...");
             if (RecentFilesMenuItem != null) RecentFilesMenuItem.Header = R._("_Recent Files");
             if (SaveMenuItem != null) SaveMenuItem.Header = R._("_Save ROM");
             if (SaveAsMenuItem != null) SaveAsMenuItem.Header = R._("Save _As...");
@@ -648,6 +651,55 @@ namespace FEBuilderGBA.Avalonia.Views
                     return;
                 }
             }
+
+            // Auto-open a decomp project if --project was specified (#1129). This
+            // drives the headless badge screenshot. Guard with try/catch so a bad
+            // project fails like the rom-failure path in smoke/screenshot mode.
+            if (!string.IsNullOrEmpty(App.StartupProjectDir))
+            {
+                bool projectOk = false;
+                try
+                {
+                    var project = DecompProjectDetector.Detect(App.StartupProjectDir);
+                    if (project != null)
+                    {
+                        var resolved = DecompProjectDetector.ResolveBuiltRom(App.StartupProjectDir, project);
+                        if (resolved.Status == DecompResolveStatus.Ok)
+                        {
+                            project.BuiltRomPath = resolved.Path;
+                            CoreState.DecompProject = project;
+                            projectOk = LoadRomFile(resolved.Path);
+                            if (!projectOk)
+                                CoreState.DecompProject = null;
+                            UpdateDecompBadge();
+                        }
+                    }
+                }
+                catch
+                {
+                    projectOk = false;
+                    CoreState.DecompProject = null;
+                }
+
+                if (!projectOk)
+                {
+                    if (App.SmokeTestMode)
+                    {
+                        Environment.ExitCode = 2;
+                        Close();
+                        return;
+                    }
+                    await MessageBoxWindow.Show(this, R._("Failed to open decomp project:") + $" {App.StartupProjectDir}", R._("Error"), MessageBoxMode.Ok);
+                    return;
+                }
+
+                if (App.SmokeTestMode)
+                {
+                    await Task.Delay(200);
+                    RunSmokeTest();
+                    return;
+                }
+            }
         }
 
         /// <summary>
@@ -655,12 +707,39 @@ namespace FEBuilderGBA.Avalonia.Views
         /// Returns true on success.
         /// </summary>
         public bool LoadRomFile(string path)
+            => LoadRomFile(path, null);
+
+        /// <summary>
+        /// Load a ROM file, optionally forcing the version detection (#1134).
+        /// When <paramref name="forceVersion"/> is non-empty the ROM is loaded
+        /// via <see cref="ROM.LoadForceVersion"/> (mirrors the CLI seam in
+        /// <c>RomLoader.LoadRom(path, forceVersion)</c>); a null/empty value
+        /// keeps the existing autodetect behaviour.
+        /// </summary>
+        public bool LoadRomFile(string path, string forceVersion)
         {
             ROM rom = new ROM();
-            bool ok = rom.Load(path, out string version);
+            bool ok;
+            if (!string.IsNullOrEmpty(forceVersion))
+            {
+                // Mirror CLI RomLoader: map the manifest forceVersion string to
+                // the internal game code instead of trusting the ROM header.
+                ok = rom.LoadForceVersion(path, forceVersion);
+            }
+            else
+            {
+                ok = rom.Load(path, out string version);
+            }
             if (!ok) return false;
 
             CoreState.ROM = rom;
+
+            // #1035: wire the patch-scan hardcode cache per ROM load, replacing
+            // the no-op HeadlessAsmMapCache wired as the pre-ROM default in
+            // App.axaml.cs. Created fresh each load so a previous ROM's hardcode
+            // flags never leak; lazy — it only scans config/patch2 on the first
+            // IsHardCode* read from the Unit/Class/Item editor warning hyperlink.
+            CoreState.AsmMapFileAsmCache = new CoreAsmMapCache(rom);
 
             // Wire headless caches so Core code doesn't NullRef
             CoreState.CommentCache ??= new HeadlessEtcCache();
@@ -692,6 +771,13 @@ namespace FEBuilderGBA.Avalonia.Views
 
             // Init text escape
             CoreState.TextEscape ??= new TextEscape();
+
+            // Text-ID reference cache (#1028 Slice A) — used by the Text Editor's
+            // References-tab "Add Reference" flow. The ctor reads the per-ROM user
+            // TSV (config/etc/<rom>/textid_.txt) + shipped system names, so it is
+            // ROM/path/language-sensitive and MUST be (re)created on EVERY ROM load
+            // (replace, not ??=) — never at app boot.
+            CoreState.UseTextIDCache = new TextIDCacheCore();
 
             // Init flag cache
             if (CoreState.FlagCache == null)
@@ -741,6 +827,10 @@ namespace FEBuilderGBA.Avalonia.Views
 
             // Update UI
             _vm.UpdateFromRom();
+            // #1129: reflect decomp mode on the toolbar badge. CoreState.DecompProject
+            // is set BEFORE this call in the decomp open path and cleared before it in
+            // the classic open path, so reading CoreState.IsDecompMode here is correct.
+            _vm.RefreshDecompMode();
             SetStatusText(_vm.StatusText);
             NoRomLabel.IsVisible = false;
             EditorPanel.IsVisible = true;
@@ -931,6 +1021,25 @@ namespace FEBuilderGBA.Avalonia.Views
 
                 string romVersion = CoreState.ROM?.RomInfo?.VersionToFilename ?? "Unknown";
 
+                // Capture the MainWindow itself first, so window-level chrome (e.g.
+                // the #1129 decomp "build preview" toolbar badge) appears in a PNG.
+                try
+                {
+                    await Task.Delay(200); // let the toolbar/badge realize
+                    var mainSize = new PixelSize(
+                        Math.Max((int)this.Bounds.Width, 100),
+                        Math.Max((int)this.Bounds.Height, 100));
+                    using var mainRtb = new RenderTargetBitmap(mainSize, new Vector(96, 96));
+                    mainRtb.Render(this);
+                    string mainFile = Path.Combine(screenshotDir, $"Avalonia_MainWindow_{romVersion}.png");
+                    mainRtb.Save(mainFile);
+                    Console.WriteLine($"SCREENSHOT: MainWindow ... OK ({mainFile})");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"SCREENSHOT: MainWindow ... FAIL: {ex.Message}");
+                }
+
                 var editors = GetAllEditorFactories();
                 Console.WriteLine($"SCREENSHOT: Capturing {editors.Count} editors...");
 
@@ -951,6 +1060,40 @@ namespace FEBuilderGBA.Avalonia.Views
                                 await Task.Delay(100); // Let selection handler run
                         }
                         catch { /* Not all editors have SelectFirstItem */ }
+
+                        // Optionally select a specific tab (by AutomationId) so a
+                        // non-default tab is shown in the PNG. Opt-in via
+                        // --screenshot-tab=<AutomationId>; editors without a
+                        // matching tab are captured unchanged.
+                        if (!string.IsNullOrEmpty(App.ScreenshotTabAutomationId)
+                            && SelectTabByAutomationId(window, App.ScreenshotTabAutomationId!))
+                        {
+                            await Task.Delay(100); // Let the tab content realize
+                        }
+
+                        // Optionally force an IsVisible-toggled panel visible (by
+                        // AutomationId) so a category sub-panel normally hidden
+                        // behind a selection state shows up in the PNG. Opt-in via
+                        // --screenshot-show-panel=<AutomationId>; editors without a
+                        // matching control are captured unchanged.
+                        if (!string.IsNullOrEmpty(App.ScreenshotShowPanelAutomationId)
+                            && ShowPanelByAutomationId(window, App.ScreenshotShowPanelAutomationId!))
+                        {
+                            await Task.Delay(100); // Let the panel content realize
+                        }
+
+                        // Optionally INVOKE a button (by AutomationId) so a gated
+                        // editor page (e.g. the Init Wizard's Step1 reached via its
+                        // Start button) is shown in the PNG. Unlike --screenshot-tab=
+                        // (a direct SelectedItem set that gate-aware wizards revert),
+                        // this raises the button's real Click handler. Opt-in via
+                        // --screenshot-invoke-button=<AutomationId>; editors without a
+                        // matching button are captured unchanged.
+                        if (!string.IsNullOrEmpty(App.ScreenshotInvokeButtonAutomationId)
+                            && InvokeButtonByAutomationId(window, App.ScreenshotInvokeButtonAutomationId!))
+                        {
+                            await Task.Delay(150); // Let the navigation handler run + content realize
+                        }
 
                         // Capture screenshot via RenderTargetBitmap
                         var pixelSize = new PixelSize(
@@ -988,6 +1131,87 @@ namespace FEBuilderGBA.Avalonia.Views
                 Environment.ExitCode = failed > 0 ? 1 : 0;
                 Close();
             }, DispatcherPriority.Background);
+        }
+
+        /// <summary>
+        /// Select the first <c>TabItem</c> in <paramref name="root"/> whose
+        /// <c>AutomationProperties.AutomationId</c> equals
+        /// <paramref name="automationId"/>, by walking the logical tree and
+        /// setting its parent <see cref="TabControl"/>'s <c>SelectedItem</c>.
+        /// Returns true when a matching tab was found + selected. Used by the
+        /// opt-in <c>--screenshot-tab=</c> screenshot mode.
+        /// </summary>
+        static bool SelectTabByAutomationId(Control root, string automationId)
+        {
+            foreach (var descendant in root.GetLogicalDescendants())
+            {
+                if (descendant is TabItem tab
+                    && AutomationProperties.GetAutomationId(tab) == automationId)
+                {
+                    if (tab.Parent is TabControl tc)
+                    {
+                        tc.SelectedItem = tab;
+                        return true;
+                    }
+                    tab.IsSelected = true;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Force the <see cref="Control.IsVisible"/> of the first descendant
+        /// <see cref="Control"/> whose <c>AutomationProperties.AutomationId</c>
+        /// equals <paramref name="automationId"/> to <c>true</c>, by walking the
+        /// logical tree. Returns true when a matching control was found. Used by
+        /// the opt-in <c>--screenshot-show-panel=</c> screenshot mode to render an
+        /// <c>IsVisible</c>-toggled category panel that the default selection state
+        /// would otherwise hide.
+        /// </summary>
+        static bool ShowPanelByAutomationId(Control root, string automationId)
+        {
+            foreach (var descendant in root.GetLogicalDescendants())
+            {
+                if (descendant is Control ctrl
+                    && AutomationProperties.GetAutomationId(ctrl) == automationId)
+                {
+                    ctrl.IsVisible = true;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Invoke (raise <see cref="global::Avalonia.Controls.Button.Command"/> /
+        /// the routed Click) the first descendant <see cref="global::Avalonia.Controls.Button"/>
+        /// whose <c>AutomationProperties.AutomationId</c> equals
+        /// <paramref name="automationId"/>, by walking the logical tree. Returns
+        /// true when a matching button was found + invoked. Used by the opt-in
+        /// <c>--screenshot-invoke-button=</c> screenshot mode to drive a gated
+        /// editor's real navigation handler (e.g. the Init Wizard Start button)
+        /// rather than poking its view-state directly.
+        /// </summary>
+        static bool InvokeButtonByAutomationId(Control root, string automationId)
+        {
+            foreach (var descendant in root.GetLogicalDescendants())
+            {
+                if (descendant is global::Avalonia.Controls.Button btn
+                    && AutomationProperties.GetAutomationId(btn) == automationId)
+                {
+                    // Use the UIA invoke pattern so both Command- and
+                    // Click-handler-backed buttons fire identically.
+                    var peer = global::Avalonia.Automation.Peers.ControlAutomationPeer.CreatePeerForElement(btn);
+                    if (peer?.GetProvider<global::Avalonia.Automation.Provider.IInvokeProvider>() is { } invoke)
+                    {
+                        invoke.Invoke();
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -2261,16 +2485,153 @@ namespace FEBuilderGBA.Avalonia.Views
             var path = await FileDialogHelper.OpenRomFile(this);
             if (string.IsNullOrEmpty(path)) return;
 
+            // Opening a plain ROM clears any active decomp project (#1129). Cleared
+            // only AFTER the picker returns a real path, so cancelling the dialog
+            // leaves a currently-open decomp preview (and its save guard) intact.
+            CoreState.DecompProject = null;
+
             bool ok = LoadRomFile(path);
             if (!ok)
             {
                 await MessageBoxWindow.Show(this, R._("Failed to load ROM."), R._("Error"), MessageBoxMode.Ok);
             }
+            UpdateDecompBadge();
+        }
+
+        /// <summary>
+        /// Open a decomp project folder, resolve its built ROM, and load it as a
+        /// read-only preview with the "build preview" badge shown (#1129 slice 1).
+        /// </summary>
+        private async void OpenDecompProject_Click(object? sender, RoutedEventArgs e)
+        {
+            var dir = await FileDialogHelper.OpenProjectFolder(this);
+            if (string.IsNullOrEmpty(dir)) return;
+
+            var project = DecompProjectDetector.Detect(dir);
+            if (project == null)
+            {
+                await MessageBoxWindow.Show(this, R._("Not a decomp project directory."), R._("Decomp Project"), MessageBoxMode.Ok);
+                return;
+            }
+
+            var resolved = DecompProjectDetector.ResolveBuiltRom(dir, project);
+            if (resolved.Status == DecompResolveStatus.NotBuilt)
+            {
+                await MessageBoxWindow.Show(this, R._("Project found but no built ROM — run the build first, then reload."), R._("Decomp Project"), MessageBoxMode.Ok);
+                return;
+            }
+            if (resolved.Status != DecompResolveStatus.Ok)
+            {
+                await MessageBoxWindow.Show(this, R._("Not a decomp project directory."), R._("Decomp Project"), MessageBoxMode.Ok);
+                return;
+            }
+
+            project.BuiltRomPath = resolved.Path;
+            CoreState.DecompProject = project;
+
+            bool ok = LoadRomFile(resolved.Path);
+            if (!ok)
+            {
+                CoreState.DecompProject = null;
+                UpdateDecompBadge();
+                await MessageBoxWindow.Show(this, R._("Failed to load ROM:") + $" {resolved.Path}", R._("Error"), MessageBoxMode.Ok);
+                return;
+            }
+            UpdateDecompBadge();
+        }
+
+        /// <summary>Refresh the decomp-mode badge from CoreState after a load.</summary>
+        private void UpdateDecompBadge()
+        {
+            _vm.RefreshDecompMode();
+        }
+
+        /// <summary>Run the project build without reloading the ROM (#1134).</summary>
+        private async void DecompBuild_Click(object? sender, RoutedEventArgs e)
+        {
+            await RunDecompBuild(reload: false);
+        }
+
+        /// <summary>Run the project build and reload the built ROM (#1134).</summary>
+        private async void DecompBuildReload_Click(object? sender, RoutedEventArgs e)
+        {
+            await RunDecompBuild(reload: true);
+        }
+
+        private async System.Threading.Tasks.Task RunDecompBuild(bool reload)
+        {
+            var project = CoreState.DecompProject;
+            if (project == null) return;
+
+            if (!project.IsBuildEnabled)
+            {
+                await MessageBoxWindow.Show(this,
+                    R._("Project has not opted into FEBuilder-managed builds. Add a build section to febuilder.project.json."),
+                    R._("Decomp Build"), MessageBoxMode.Ok);
+                return;
+            }
+
+            string cmdLine = DecompBuildCore.GetEffectiveCommandLine(project);
+            string confirmMsg = $"{R._("Run build command?")}\n\n{cmdLine}\n\n{R._("Working directory:")} {project.ProjectRoot}";
+            var confirm = await MessageBoxWindow.Show(this, confirmMsg, R._("Decomp Build"), MessageBoxMode.YesNo);
+            if (confirm != MessageBoxResult.Yes) return;
+
+            _vm.DecompBuildOutput = R._("Building...");
+
+            DecompBuildResult res = await System.Threading.Tasks.Task.Run(
+                () => DecompBuildCore.Build(project, ProcessRunnerCore.DefaultTimeoutMs));
+
+            var sb = new System.Text.StringBuilder();
+            if (!string.IsNullOrEmpty(res.Run.Stdout))
+            {
+                sb.AppendLine("--- stdout ---");
+                sb.Append(res.Run.Stdout);
+            }
+            if (!string.IsNullOrEmpty(res.Run.Stderr))
+            {
+                sb.AppendLine("--- stderr ---");
+                sb.Append(res.Run.Stderr);
+            }
+            if (res.Run.Started)
+                sb.AppendLine($"Exit: {res.Run.ExitCode}");
+            sb.AppendLine(res.Message);
+            _vm.DecompBuildOutput = sb.ToString();
+
+            if (!res.Success)
+            {
+                _vm.RefreshDecompMode();
+                return;
+            }
+
+            if (reload)
+            {
+                var status = DecompBuildCore.ReloadBuiltRom(
+                    project,
+                    (p, fv) => LoadRomFile(p, fv));
+
+                if (status != DecompResolveStatus.Ok)
+                {
+                    _vm.DecompBuildOutput += "\n" + R._("Failed to reload built ROM after build.");
+                }
+                else
+                {
+                    // Re-init for symbol re-parse (Avalonia path wires AsmMapCache in LoadRomFile)
+                }
+            }
+
+            UpdateDecompBadge();
         }
 
         private void SaveRom_Click(object? sender, RoutedEventArgs e)
         {
             if (CoreState.ROM == null) return;
+            // Amendment 5: decomp preview ROMs are read-only — block save with an
+            // explanatory dialog (non-awaited pattern to keep the sync signature).
+            if (CoreState.IsDecompMode)
+            {
+                _ = MessageBoxWindow.Show(this, R._("This is a source-backed decomp project. The built ROM is a preview and cannot be saved over. Edit the source and rebuild instead."), R._("Decomp Project"), MessageBoxMode.Ok);
+                return;
+            }
             CoreState.ROM.Save(CoreState.ROM.Filename, false);
             _vm.HasUnsavedChanges = false;
             AutoSaveService.Instance.MarkSaved();
@@ -2280,6 +2641,12 @@ namespace FEBuilderGBA.Avalonia.Views
         private async void SaveAsRom_Click(object? sender, RoutedEventArgs e)
         {
             if (CoreState.ROM == null) return;
+            // Amendment 5: block Save As for decomp preview ROMs too.
+            if (CoreState.IsDecompMode)
+            {
+                await MessageBoxWindow.Show(this, R._("This is a source-backed decomp project. The built ROM is a preview and cannot be saved over. Edit the source and rebuild instead."), R._("Decomp Project"), MessageBoxMode.Ok);
+                return;
+            }
 
             string suggestedName = Path.GetFileName(CoreState.ROM.Filename ?? "rom.gba");
             var path = await FileDialogHelper.SaveRomFile(this, suggestedName);
@@ -2299,15 +2666,22 @@ namespace FEBuilderGBA.Avalonia.Views
             string lastPath = CoreState.Config?.at("Last_Rom_Filename", "") ?? "";
             if (string.IsNullOrEmpty(lastPath) || !File.Exists(lastPath))
             {
+                // No recent ROM — leave a currently-open decomp preview (and its
+                // save guard) intact rather than dropping decomp mode (#1129).
                 _ = MessageBoxWindow.Show(this, R._("No recent ROM found."), R._("Open Last ROM"), MessageBoxMode.Ok);
                 return;
             }
+
+            // Opening a plain ROM clears any active decomp project (#1129). Cleared
+            // only after we know a real last ROM exists to load.
+            CoreState.DecompProject = null;
 
             bool ok = LoadRomFile(lastPath);
             if (!ok)
             {
                 _ = MessageBoxWindow.Show(this, R._("Failed to load ROM:") + $" {lastPath}", R._("Error"), MessageBoxMode.Ok);
             }
+            UpdateDecompBadge();
         }
 
         private void Undo_Click(object? sender, RoutedEventArgs e)

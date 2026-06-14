@@ -616,11 +616,168 @@ public class SkillConfigFE8NVer3SkillParityTests
         Assert.Contains("AutomationId=\"SkillConfigFE8NVer3Skill_JumpToCombatArt_Button\"", axaml);
     }
 
+    // -----------------------------------------------------------------
+    // #1009 — Move-to-COMBAT_ART now FILTERS + selects the patch.
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// #1009: the JumpToCombatArt_Click handler must Navigate to the Patch
+    /// Manager and call PatchManagerView.JumpTo("FE8N SKILL COMBAT ART", 0)
+    /// (the #428 filter seam) so it filters + selects the combat-art patch,
+    /// instead of opening unfiltered with nothing selected. Roslyn-static
+    /// read scoped to the handler BODY (so unrelated handlers in the same file
+    /// can't satisfy these assertions).
+    /// </summary>
     [Fact]
-    public void View_HasListExpandButton_Wired()
+    public void View_JumpToCombatArt_FiltersPatchManager()
+    {
+        string handler = ExtractJumpToCombatArtHandlerBody();
+
+        Assert.True(handler.Contains("Navigate<PatchManagerView>"),
+            "JumpToCombatArt_Click must Navigate<PatchManagerView> (mirrors ItemEditorView.OnWeaponDebuffsLink_Click)");
+        Assert.True(handler.Contains("FindOpen<PatchManagerView>"),
+            "JumpToCombatArt_Click must FindOpen<PatchManagerView> to grab the opened view instance");
+        Assert.True(handler.Contains("JumpTo(\"FE8N SKILL COMBAT ART\", 0)"),
+            "JumpToCombatArt_Click must call JumpTo(\"FE8N SKILL COMBAT ART\", 0) (the #428 filter seam)");
+    }
+
+    /// <summary>
+    /// #1009: the handler must no longer rely solely on a bare
+    /// `Open<PatchManagerView>()` (unfiltered, nothing selected), and the stale
+    /// "does not yet expose JumpToSelectStruct" wording must be gone from the
+    /// handler body.
+    /// </summary>
+    [Fact]
+    public void View_JumpToCombatArt_NoLongerBareOpenOrStaleWording()
+    {
+        string handler = ExtractJumpToCombatArtHandlerBody();
+
+        // ".Open<PatchManagerView>()" (with the leading dot) is the bare
+        // navigate-only call; the leading dot distinguishes it from the
+        // legitimate "FindOpen<PatchManagerView>()" call which ends in the
+        // same "Open<PatchManagerView>()" text.
+        Assert.False(handler.Contains(".Open<PatchManagerView>()"),
+            "JumpToCombatArt_Click must not use the bare .Open<PatchManagerView>() (unfiltered, nothing selected)");
+        Assert.False(handler.Contains("does not yet expose JumpToSelectStruct"),
+            "The stale 'does not yet expose JumpToSelectStruct' wording must be removed from the handler");
+    }
+
+    /// <summary>
+    /// Config guard (Copilot refinement): the filter substring
+    /// "FE8N SKILL COMBAT ART" must resolve UNAMBIGUOUSLY to exactly one shipped
+    /// patch. Scan every PATCH_*.txt under config/patch2/, PARSE each patch's
+    /// NAME= metadata line (mirroring PatchMetadataCore.ParsePatchFile —
+    /// Trim() + StartsWith("NAME=", OrdinalIgnoreCase) + Substring(5).Trim()),
+    /// and assert EXACTLY ONE patch NAME contains the filter substring. If the
+    /// submodule is not checked out (no patch files found), the test is skipped
+    /// (Assert.True(true)) rather than failing on a missing dependency.
+    /// </summary>
+    [Fact]
+    public void Config_ExactlyOnePatch_NamedFE8NSkillCombatArt()
+    {
+        string repoRoot = FindRepoRoot();
+        string patch2Dir = Path.Combine(repoRoot, "config", "patch2");
+        if (!Directory.Exists(patch2Dir))
+        {
+            // config/patch2 is a git submodule; if it's not checked out there
+            // are no patch files to scan. Skip rather than fail.
+            Assert.True(true, "config/patch2 submodule not checked out — skipping config guard");
+            return;
+        }
+
+        var patchFiles = Directory.GetFiles(patch2Dir, "PATCH_*.txt", SearchOption.AllDirectories);
+        if (patchFiles.Length == 0)
+        {
+            Assert.True(true, "no PATCH_*.txt files found (submodule not populated) — skipping config guard");
+            return;
+        }
+
+        const string filter = "FE8N SKILL COMBAT ART";
+        int matches = 0;
+        foreach (string file in patchFiles)
+        {
+            foreach (string rawLine in File.ReadAllLines(file))
+            {
+                string line = rawLine.Trim();
+                if (line.StartsWith("//")) continue;
+                if (!line.StartsWith("NAME=", StringComparison.OrdinalIgnoreCase)) continue;
+                string name = line.Substring(5).Trim();
+                if (name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
+                    matches++;
+                break; // one NAME= per patch file
+            }
+        }
+
+        Assert.True(matches == 1,
+            $"Exactly one shipped patch NAME must contain \"{filter}\" so the JumpTo filter resolves unambiguously — found {matches}");
+    }
+
+    /// <summary>
+    /// Read the JumpToCombatArt_Click handler body from the View code-behind so
+    /// the #1009 static assertions are scoped to that handler (not the whole
+    /// file). Returns text from the handler's method signature up to the NEXT
+    /// method declaration — found generically by the next occurrence of the
+    /// standard 8-space-indented `void ` signature (the indentation every
+    /// handler in this file uses), so renaming/reordering the following handler
+    /// cannot silently break the extraction. If no following `void ` method is
+    /// found, the slice extends to the end of the source.
+    /// </summary>
+    static string ExtractJumpToCombatArtHandlerBody()
+    {
+        string repoRoot = FindRepoRoot();
+        string sourcePath = Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views",
+            "SkillConfigFE8NVer3SkillView.axaml.cs");
+        string source = File.ReadAllText(sourcePath);
+
+        const string marker = "void JumpToCombatArt_Click(";
+        int start = source.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start >= 0, "JumpToCombatArt_Click handler not found in the View code-behind");
+
+        // End at the next method declaration after the marker — located
+        // generically via the standard 8-space method-signature indentation
+        // ("\n        void "), not a hard-coded handler name. Normalize CRLF so
+        // the search works regardless of the file's line endings.
+        int searchFrom = start + marker.Length;
+        const string nextMethodSignature = "\n        void ";
+        int crlf = source.IndexOf("\r\n        void ", searchFrom, StringComparison.Ordinal);
+        int lf = source.IndexOf(nextMethodSignature, searchFrom, StringComparison.Ordinal);
+        int next = (crlf >= 0 && (lf < 0 || crlf < lf)) ? crlf : lf;
+        if (next < 0) next = source.Length;
+        return source.Substring(start, next - start);
+    }
+
+    /// <summary>
+    /// #997: the List Expand button is intentionally DISABLED with an honest
+    /// "not yet implemented" tooltip (functional table expansion is a documented
+    /// follow-up — the skill-config tables are multi-table / multi-pointer per
+    /// patch variant). Asserts the disabled state, the removed no-op Click
+    /// handler, and that the stale #500 placeholder tooltip is gone.
+    /// </summary>
+    [Fact]
+    public void View_ListExpandButton_IsDisabled()
     {
         string axaml = ReadAxaml();
-        Assert.Contains("AutomationId=\"SkillConfigFE8NVer3Skill_ListExpand_Button\"", axaml);
+
+        // Isolate the self-closing button element (`[^>]` spans newlines, so the
+        // match captures the whole element regardless of attribute wrapping).
+        var match = System.Text.RegularExpressions.Regex.Match(
+            axaml, "<Button[^>]*SkillConfigFE8NVer3Skill_ListExpand_Button[^>]*?/>");
+        Assert.True(match.Success, "List Expand button element not found in AXAML.");
+        string button = match.Value;
+
+        Assert.Contains("AutomationId=\"SkillConfigFE8NVer3Skill_ListExpand_Button\"", button);
+        Assert.Contains("IsEnabled=\"False\"", button);
+        Assert.DoesNotContain("Click=", button);
+
+        // The stale #500 / "Pending Core extraction" placeholder must be gone from
+        // the List Expand button element (other unrelated sibling buttons in this
+        // view keep their own #500 placeholders — out of scope for #997).
+        Assert.DoesNotContain("#500", button);
+        Assert.DoesNotContain("Pending Core extraction", button);
+
+        // The honest "not yet implemented" tooltip must live on the enabled wrapper.
+        Assert.Contains("ToolTip.Tip=", axaml);
+        Assert.Contains("List expansion is not yet implemented for the skill-config tables", axaml);
     }
 
     [Fact]
@@ -657,38 +814,42 @@ public class SkillConfigFE8NVer3SkillParityTests
     /// Addresses Copilot CLI PR-review finding #2 (round 1).
     /// </summary>
     [Fact]
-    public void View_CountSubListEntries_CountsUntilZeroTerminator()
+    public void View_SubListEditor_CountsUntilZeroTerminator()
     {
-        // Build a synthetic ROM that plants 3 nonzero bytes followed by 0
-        // at a known offset within the safety window.
+        // #930: the per-tab sub-list count is now surfaced by the reusable
+        // SkillSubListEditorViewModel (Load → ScanByteList), not the old
+        // read-only View.CountSubListEntries helper. Plant a slot → 3-entry
+        // null-terminated list and assert the editor VM reports 3.
         byte[] bytes = new byte[0x1000000];
+        const uint slotAddr = 0x00800000u;
         const uint subListBase = 0x00F00000u;
-        bytes[subListBase + 0] = 0x01;
-        bytes[subListBase + 1] = 0x02;
-        bytes[subListBase + 2] = 0x03;
+        // slot → subListBase (GBA pointer).
+        bytes[(int)slotAddr + 0] = (byte)(subListBase & 0xFF);
+        bytes[(int)slotAddr + 1] = (byte)((subListBase >> 8) & 0xFF);
+        bytes[(int)slotAddr + 2] = (byte)((subListBase >> 16) & 0xFF);
+        bytes[(int)slotAddr + 3] = 0x08; // | 0x08000000
+        bytes[(int)subListBase + 0] = 0x01;
+        bytes[(int)subListBase + 1] = 0x02;
+        bytes[(int)subListBase + 2] = 0x03;
         // bytes[subListBase + 3] stays 0 -> terminator.
 
         var rom = new ROM();
         rom.LoadLow("synthetic-fe8nver3-sublist.gba", bytes, "BE8E01");
-
-        // Invoke the static helper via reflection (it lives on the View
-        // class for code-locality reasons but is functionally pure).
-        var viewType = typeof(SkillConfigFE8NVer3SkillView);
-        var method = viewType.GetMethod("CountSubListEntries",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-        Assert.NotNull(method);
 
         var prevRom = CoreState.ROM;
         try
         {
             CoreState.ROM = rom;
             // Case 1: planted 3-entry sub-list.
-            int count = (int)method!.Invoke(null, new object[] { rom, subListBase })!;
-            Assert.Equal(3, count);
+            var vm = new FEBuilderGBA.Avalonia.ViewModels.SkillSubListEditorViewModel();
+            vm.Load(slotAddr, id => "", canEdit: true);
+            Assert.Equal(3, vm.Entries.Count);
+            Assert.Contains("Entry count: 3", vm.CountDisplay);
 
-            // Case 2: null pointer (0) returns 0.
-            int nullCount = (int)method.Invoke(null, new object[] { rom, 0u })!;
-            Assert.Equal(0, nullCount);
+            // Case 2: null slot (0) -> empty list.
+            const uint nullSlot = 0x00810000u; // a zeroed 4-byte slot
+            vm.Load(nullSlot, id => "", canEdit: true);
+            Assert.Empty(vm.Entries);
         }
         finally { CoreState.ROM = prevRom; }
     }
@@ -799,26 +960,34 @@ public class SkillConfigFE8NVer3SkillParityTests
     }
 
     /// <summary>
-    /// `UpdateUI` calls `CountSubListEntries` and assigns the result to
-    /// the per-tab Count labels. Roslyn-static read of the code-behind
-    /// confirms the assignment is wired so the AXAML default `-` will be
-    /// replaced on every selection. Addresses Copilot CLI PR-review
-    /// finding #2 (round 1).
+    /// #930: `UpdateUI` now wires the 5 embedded SkillSubListEditorView
+    /// instances (Unit/Class/Item/Item2/Composite) via `LoadSubEditors`, which
+    /// Loads each editor against the per-skill pointer slot (+4/+8/+12/+16/+20)
+    /// — the editor itself surfaces the base + entry count (replacing the old
+    /// read-only per-tab count labels). Roslyn-static read of the code-behind
+    /// confirms the wiring exists, and that the Composite tab uses the VM's
+    /// ResolveCompositeName (B1), NOT NameResolver.GetSkillName.
     /// </summary>
     [Fact]
-    public void View_UpdateUI_PopulatesSubListEntryCounts()
+    public void View_UpdateUI_WiresFiveSubListEditors()
     {
         string repoRoot = FindRepoRoot();
         string sourcePath = Path.Combine(repoRoot, "FEBuilderGBA.Avalonia", "Views",
             "SkillConfigFE8NVer3SkillView.axaml.cs");
         string source = File.ReadAllText(sourcePath);
 
-        Assert.Contains("UnitTabCountLabel.Content", source);
-        Assert.Contains("ClassTabCountLabel.Content", source);
-        Assert.Contains("ItemTabCountLabel.Content", source);
-        Assert.Contains("Item2TabCountLabel.Content", source);
-        Assert.Contains("CompositeTabCountLabel.Content", source);
-        Assert.Contains("CountSubListEntries", source);
+        Assert.Contains("LoadSubEditors", source);
+        Assert.Contains("UnitSubEditor.Load(row + 4", source);
+        Assert.Contains("ClassSubEditor.Load(row + 8", source);
+        Assert.Contains("ItemSubEditor.Load(row + 12", source);
+        Assert.Contains("Item2SubEditor.Load(row + 16", source);
+        Assert.Contains("CompositeSubEditor.Load(row + 20", source);
+        // B1: Composite resolves via the VM's main-list resolver, not the
+        // global skill-name resolver. Check for the actual CALL form (with
+        // open paren) so the explanatory comment that names GetSkillName
+        // doesn't trip the assertion.
+        Assert.Contains("ResolveCompositeName", source);
+        Assert.DoesNotContain("NameResolver.GetSkillName(", source);
     }
 
     // -----------------------------------------------------------------

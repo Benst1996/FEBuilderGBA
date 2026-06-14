@@ -698,21 +698,44 @@ namespace FEBuilderGBA.Avalonia.Views
                 // ImagePalletView (#400 - Copilot CLI plan review #2).
                 // Portraits use a single palette block, so
                 // maxPaletteCount=1 hides the palette-index combo.
+                //
+                // #1023: also pass a render delegate so the Palette Editor's
+                // live preview shows THIS portrait's mini/map face recolored by
+                // the grid colors (block-overload renders WITHOUT writing the
+                // ROM, so an unsaved edit is reflected live).
+                // DrawPortraitMap renders the 4x4-tile mini/map face — that is
+                // MiniPortraitPtr (u32@4), NOT PortraitImagePtr (u32@0, the
+                // LZ77-compressed 96x80 main face which this raw-tile renderer
+                // cannot decode). Mirrors the VM's own MiniPortraitImage pairing.
+                uint mapFacePtr = _vm.MiniPortraitPtr;
                 var window = WindowManager.Instance.Open<ImagePalletView>();
-                window.JumpTo(_vm.PalettePtr, maxPaletteCount: 1, defaultSelectPalette: 0, paletteNames: null);
+                window.JumpTo(_vm.PalettePtr, maxPaletteCount: 1, defaultSelectPalette: 0, paletteNames: null,
+                    renderPreview: block => PortraitRendererCore.DrawPortraitMap(mapFacePtr, block));
             }
             catch (Exception ex) { Log.Error("JumpToPalette failed: {0}", ex.Message); }
         }
 
         void JumpToImporter_Click(object? sender, RoutedEventArgs e)
         {
-            try { WindowManager.Instance.Open<ImagePortraitImporterView>(); }
+            try
+            {
+                var view = WindowManager.Instance.Open<ImagePortraitImporterView>();
+                if (_vm.CurrentAddr != 0)
+                    view.NavigateTo(_vm.CurrentAddr);   // position the importer at the portrait being edited (right target + its B20-B23)
+            }
             catch (Exception ex) { Log.Error("JumpToImporter failed: {0}", ex.Message); }
         }
 
         void JumpToStatusHeight_Click(object? sender, RoutedEventArgs e)
         {
-            try { WindowManager.Instance.Open<UnitIncreaseHeightView>(); }
+            try
+            {
+                var view = WindowManager.Instance.Open<UnitIncreaseHeightView>();
+                // Best-effort pre-selection of the selected portrait's height row.
+                // An out-of-range id (no height row, or NoPortraitSelection) just
+                // leaves the default first row selected — no error (#1019).
+                view.NavigateToId(_vm.GetSelectedPortraitId());
+            }
             catch (Exception ex) { Log.Error("JumpToStatusHeight failed: {0}", ex.Message); }
         }
 

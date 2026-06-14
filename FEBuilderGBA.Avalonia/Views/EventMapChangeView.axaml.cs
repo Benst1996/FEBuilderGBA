@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using global::Avalonia.Controls;
 using global::Avalonia.Interactivity;
+using FEBuilderGBA.Avalonia.Controls;
+using FEBuilderGBA.Avalonia.Dialogs;
 using FEBuilderGBA.Avalonia.Services;
 using FEBuilderGBA.Avalonia.ViewModels;
 
@@ -22,6 +24,9 @@ namespace FEBuilderGBA.Avalonia.Views
         public EventMapChangeView()
         {
             InitializeComponent();
+            // #857: DataContext needed for the CanExportChange binding on the
+            // Export PNG button (mirrors WorldMapImageView / ImageTSAEditorView).
+            DataContext = _vm;
             MapListBox.ItemsSource = _mapDisplayItems;
             MapListBox.SelectionChanged += MapListBox_SelectionChanged;
 
@@ -73,11 +78,15 @@ namespace FEBuilderGBA.Avalonia.Views
                 if (ok)
                 {
                     UpdateUI();
+                    // #857: render the change-overlay preview after loading the entry.
+                    RenderChangePreview();
                 }
                 else
                 {
                     // No change-data for this map — clear the detail panel.
                     ClearDetail();
+                    // Clear the preview too.
+                    MapPictureImage.SetImage(null);
                 }
             }
             catch (Exception ex)
@@ -92,6 +101,10 @@ namespace FEBuilderGBA.Avalonia.Views
             {
                 _vm.LoadEntry(addr);
                 UpdateUI();
+                // #857: re-render preview when an entry is selected from the
+                // legacy AddressList (right column). The map ID was already set
+                // by the left-column MapListBox selection so _currentMapId is valid.
+                RenderChangePreview();
             }
             catch (Exception ex)
             {
@@ -151,6 +164,8 @@ namespace FEBuilderGBA.Avalonia.Views
             B7Box.Value = 0;
             P8Box.Text = "";
             CommentBox.Text = "";
+            // #857: clear preview.
+            MapPictureImage.SetImage(null);
         }
 
         void ReadFromUI()
@@ -201,21 +216,219 @@ namespace FEBuilderGBA.Avalonia.Views
             }
         }
 
-        void PointerImport_Click(object? sender, RoutedEventArgs e)
+        // ----------------------------------------------------------------
+        // Change-overlay preview (#857, NV6-PR2).
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Render the change-map overlay into <see cref="MapPictureImage"/>
+        /// and update the <c>CanExportChange</c> binding gate.
+        /// </summary>
+        void RenderChangePreview()
         {
-            // Pointer-import (mirrors WF `button1`) is not yet implemented
-            // in the Avalonia editor. The button is surfaced so the
-            // density / labels scanner sees the parity surface; full
-            // import behaviour is tracked as a follow-up.
-            CoreState.Services?.ShowError("Pointer import is not yet implemented in the Avalonia editor.");
+            try
+            {
+                IImage? img = _vm.RenderChangePreview();
+                MapPictureImage.SetImage(img);
+                // CanExportChange is set by the VM; the binding propagates
+                // to the Export PNG button automatically.
+            }
+            catch (Exception ex)
+            {
+                MapPictureImage.SetImage(null);
+                _vm.CanExportChange = false;
+                Log.Error($"EventMapChangeView.RenderChangePreview failed: {ex}");
+            }
         }
 
-        void ListExpands_Click(object? sender, RoutedEventArgs e)
+        /// <summary>Export the change-overlay preview as PNG.</summary>
+        async void ExportPng_Click(object? sender, RoutedEventArgs e)
         {
-            // List-expansion (mirrors WF `AddressListExpandsButton`) is
-            // not yet implemented in the Avalonia editor. Same follow-up
-            // status as PointerImport above.
-            CoreState.Services?.ShowError("List expansion is not yet implemented in the Avalonia editor.");
+            try
+            {
+                await MapPictureImage.ExportPng(this, "eventmapchange_overlay");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"EventMapChangeView.ExportPng failed: {ex}");
+            }
+        }
+
+        // #961 W2c — pointer-import (mirrors the intent of WF EventMapChangeForm
+        // `button1` "変化データ ポインタ先へのインポート"). Prompts for a SOURCE
+        // change-data address, copies that record's tile bytes (sized by the
+        // current record's W×H) into ROM free space, and repoints THIS record's
+        // P8 at the copy — all under one UndoService scope. Never overwrites in
+        // place, so a size mismatch can't corrupt neighbouring data.
+        async void PointerImport_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (!_vm.IsLoaded || _vm.CurrentAddr == 0)
+                {
+                    CoreState.Services?.ShowError(R._(
+                        "No map-change entry is selected. Select a map with change-data before importing."));
+                    return;
+                }
+                if (_vm.B3 == 0 || _vm.B4 == 0)
+                {
+                    CoreState.Services?.ShowError(R._(
+                        "The selected record has zero width or height. Set the W/H fields and Write before importing."));
+                    return;
+                }
+
+                // Prompt for the SOURCE change-data address. Default to the
+                // current record's P8 destination so re-importing the same data
+                // (a deep-copy / detach) is the one-click path. The dialog edits a
+                // ROM offset; a GBA pointer is also accepted (the VM normalises
+                // via U.toOffset). The dialog max is the GBA cartridge-addressable
+                // ceiling (ROM space is 0x08000000–0x09FFFFFF, the exclusive bound
+                // 0x0A000000 used throughout U.isSafetyOffset/isPointer) so BOTH a
+                // raw offset AND a GBA pointer are enterable. The REAL bounds check
+                // (U.toOffset → U.isSafetyOffset → srcOffset + length > Data.Length)
+                // lives in ImportChangeDataFromPointer, which rejects anything that
+                // does not resolve to in-ROM data.
+                uint defaultSrc = U.toOffset(_vm.P8);
+                const uint GBA_ADDRESS_MAX = 0x09FFFFFFu;
+                uint? chosen = await NumberInputDialog.Show(
+                    this,
+                    R._("Enter the SOURCE change-data address to import from (W×H×2 = {0} bytes will be copied into this record).",
+                        _vm.B3 * _vm.B4 * 2),
+                    R._("Pointer Import"),
+                    defaultSrc,
+                    0,
+                    GBA_ADDRESS_MAX);
+                if (chosen == null) return; // cancelled
+
+                _undoService.Begin("Import Map Change Pointer");
+                try
+                {
+                    string err = _vm.ImportChangeDataFromPointer(chosen.Value);
+                    if (!string.IsNullOrEmpty(err))
+                    {
+                        _undoService.Rollback();
+                        CoreState.Services?.ShowError(err);
+                        return;
+                    }
+                    _undoService.Commit();
+                    _vm.MarkClean();
+
+                    // Reflect the repointed P8 in the UI and re-render the overlay
+                    // from the freshly imported data.
+                    UpdateUI();
+                    RenderChangePreview();
+                    CoreState.Services?.ShowInfo(R._("Imported change data into the selected record."));
+                }
+                catch (Exception inner)
+                {
+                    _undoService.Rollback();
+                    Log.Error("EventMapChangeView.PointerImport inner failed: {0}", inner.Message);
+                    CoreState.Services?.ShowError(R._("Pointer import failed: {0}", inner.Message));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("EventMapChangeView.PointerImport_Click failed: {0}", ex.Message);
+            }
+        }
+
+        // #862 — wire the List Expand button to grow the 12-byte map-change
+        // record list via DataExpansionCore.ExpandTableTo + RepointAllReferences,
+        // mirroring WorldMapImageView.BorderListExpand_Click (NV1a all-reference
+        // pattern).
+        async void ListExpands_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (!_vm.IsLoaded || _vm.CurrentAddr == 0)
+                {
+                    CoreState.Services?.ShowInfo(R._("Select a map with change-data before expanding."));
+                    return;
+                }
+                if (_vm.ReadCount == 0)
+                {
+                    CoreState.Services?.ShowInfo(R._("Cannot expand: change list is empty."));
+                    return;
+                }
+
+                // Default = current + 1, max 255 (mirrors WF
+                // AddressListExpandsButton_255 convention).
+                uint current = (uint)_vm.ReadCount;
+                uint defaultCount = current + 1;
+                if (defaultCount > 255) defaultCount = 255;
+                uint? chosen = await NumberInputDialog.Show(
+                    this,
+                    R._("Enter the new entry count for the event map-change list (current: {0}, max: 255).", current),
+                    R._("List Expansion"),
+                    defaultCount,
+                    current,
+                    255);
+                if (chosen == null) return; // cancelled
+                uint newCount = chosen.Value;
+                if (newCount == current)
+                {
+                    CoreState.Services?.ShowInfo(R._("No change: new count equals current count."));
+                    return;
+                }
+
+                _undoService.Begin("Expand Event Map Change List");
+                try
+                {
+                    string err = _vm.ExpandEventMapChangeList(newCount, _undoService.GetActiveUndoData());
+                    if (!string.IsNullOrEmpty(err))
+                    {
+                        _undoService.Rollback();
+                        CoreState.Services?.ShowError(err);
+                        return;
+                    }
+                    _undoService.Commit();
+                    _vm.MarkClean();
+
+                    // NOTE B: render the grown list directly from the new base +
+                    // new count (the VM already set ReadStartAddress/ReadCount from
+                    // the ExpandResult). Re-scanning would still be correct here
+                    // (zero-filled rows have firstByte==0 != 0xFF) but using the
+                    // result directly is cleaner.
+                    RefreshChangeListFromReadConfig();
+                    CoreState.Services?.ShowInfo(
+                        R._("Expanded event map-change list to {0} entries.", newCount));
+                }
+                catch (Exception inner)
+                {
+                    _undoService.Rollback();
+                    Log.Error($"EventMapChangeView.ListExpands inner failed: {inner.Message}");
+                    CoreState.Services?.ShowError(R._("List expansion failed: {0}", inner.Message));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"EventMapChangeView.ListExpands failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Refresh the EntryList from the VM's post-expand read-config
+        /// (ReadStartAddress = new base offset; ReadCount = new row count)
+        /// WITHOUT re-scanning (NOTE B). Mirrors
+        /// WorldMapImageView.RefreshBorderListFromReadConfig.
+        /// </summary>
+        void RefreshChangeListFromReadConfig()
+        {
+            try
+            {
+                uint baseAddr = _vm.ReadStartAddress;
+                var items = _vm.BuildChangeListForCount(baseAddr, _vm.ReadCount);
+                EntryList.SetItems(items);
+                if (TopBar != null)
+                {
+                    TopBar.StartAddressText = $"0x{baseAddr:X08}";
+                    TopBar.ReadCountText = _vm.ReadCount.ToString();
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"EventMapChangeView.RefreshChangeListFromReadConfig failed: {ex.Message}");
+            }
         }
 
         static uint ParseHexText(string? text)

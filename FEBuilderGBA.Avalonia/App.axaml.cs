@@ -24,6 +24,9 @@ namespace FEBuilderGBA.Avalonia
         /// <summary>ROM path passed via --rom command line argument.</summary>
         public static string? StartupRomPath { get; set; }
 
+        /// <summary>Decomp project directory passed via --project command line argument (#1129).</summary>
+        public static string? StartupProjectDir { get; set; }
+
         /// <summary>When true, run editor smoke test and exit.</summary>
         public static bool SmokeTestMode { get; set; }
 
@@ -56,6 +59,37 @@ namespace FEBuilderGBA.Avalonia
 
         /// <summary>Directory to save screenshots. Defaults to ./screenshots beside the exe.</summary>
         public static string? ScreenshotDir { get; set; }
+
+        /// <summary>
+        /// Optional AutomationId of a <c>TabItem</c> the <c>--screenshot-all</c>
+        /// runner should select on each captured editor before rendering (so a
+        /// non-default tab is shown in the PNG). Null = capture the default tab.
+        /// Editors that don't host a matching tab are captured unchanged.
+        /// </summary>
+        public static string? ScreenshotTabAutomationId { get; set; }
+
+        /// <summary>
+        /// Optional AutomationId of a <see cref="global::Avalonia.Controls.Control"/>
+        /// (typically an <c>IsVisible</c>-toggled panel) the <c>--screenshot-all</c>
+        /// runner should force visible on each captured editor before rendering, so
+        /// a category panel normally hidden behind a selection state shows up in the
+        /// PNG. Null = no panel forced. Editors without a matching control are
+        /// captured unchanged. Opt-in via <c>--screenshot-show-panel=&lt;AutomationId&gt;</c>.
+        /// </summary>
+        public static string? ScreenshotShowPanelAutomationId { get; set; }
+
+        /// <summary>
+        /// Optional AutomationId of a <see cref="global::Avalonia.Controls.Button"/>
+        /// the <c>--screenshot-all</c> runner should INVOKE (raise Click) on each
+        /// captured editor before rendering. Unlike <c>--screenshot-tab=</c> (which
+        /// sets <c>TabControl.SelectedItem</c> directly and is therefore reverted by
+        /// gate-aware wizards like <c>ToolInitWizardView</c>), invoking the button
+        /// drives the editor's real navigation handler, so a gated wizard page (e.g.
+        /// the Init Wizard's Step1 download buttons) is reached the same way a user
+        /// reaches it. Null = no button invoked. Editors without a matching button
+        /// are captured unchanged. Opt-in via <c>--screenshot-invoke-button=&lt;AutomationId&gt;</c>.
+        /// </summary>
+        public static string? ScreenshotInvokeButtonAutomationId { get; set; }
 
         /// <summary>Gap-sweep mode (Phase 1 density, Phase 2 labels, …) or null if no gap-sweep flag was passed.</summary>
         public static string? GapSweepMode { get; set; }
@@ -917,6 +951,7 @@ namespace FEBuilderGBA.Avalonia
                 SetBrush("CharCodeCellBrush", "#3A3A3A");
                 SetBrush("WelcomeBannerBrush", "#2A2A3A");
                 SetBrush("WelcomeBannerBorderBrush", "#3A3A5A");
+                SetBrush("DecompBadgeBrush", "#FF9A3C");
             }
             else
             {
@@ -947,6 +982,7 @@ namespace FEBuilderGBA.Avalonia
                 SetBrush("CharCodeCellBrush", "#FFE0E0E0");
                 SetBrush("WelcomeBannerBrush", "#E8EAF6");
                 SetBrush("WelcomeBannerBorderBrush", "#C5CAE9");
+                SetBrush("DecompBadgeBrush", "#B85C00");
             }
         }
 
@@ -1083,6 +1119,18 @@ namespace FEBuilderGBA.Avalonia
                 {
                     ScreenshotDir = args[i].Substring("--screenshot-dir=".Length);
                 }
+                else if (args[i].StartsWith("--screenshot-tab="))
+                {
+                    ScreenshotTabAutomationId = args[i].Substring("--screenshot-tab=".Length);
+                }
+                else if (args[i].StartsWith("--screenshot-show-panel="))
+                {
+                    ScreenshotShowPanelAutomationId = args[i].Substring("--screenshot-show-panel=".Length);
+                }
+                else if (args[i].StartsWith("--screenshot-invoke-button="))
+                {
+                    ScreenshotInvokeButtonAutomationId = args[i].Substring("--screenshot-invoke-button=".Length);
+                }
                 else if (args[i] == "--lastrom")
                 {
                     // Load last ROM from config
@@ -1098,6 +1146,14 @@ namespace FEBuilderGBA.Avalonia
                 else if (args[i].StartsWith("--rom="))
                 {
                     StartupRomPath = args[i].Substring("--rom=".Length);
+                }
+                else if (args[i].StartsWith("--project="))
+                {
+                    StartupProjectDir = args[i].Substring("--project=".Length);
+                }
+                else if (args[i] == "--project" && i + 1 < args.Length)
+                {
+                    StartupProjectDir = args[++i];
                 }
             }
         }

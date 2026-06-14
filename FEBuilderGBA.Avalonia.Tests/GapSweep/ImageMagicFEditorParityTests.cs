@@ -192,34 +192,118 @@ public class ImageMagicFEditorParityTests
     }
 
     // -----------------------------------------------------------------
-    // Deferred buttons — disabled + tooltipped per scope discipline.
+    // #881: Import wired; Export/Source buttons also wired.
     // -----------------------------------------------------------------
 
-    [Theory]
-    [InlineData("ImageMagicFEditor_MagicAnimeImport_Button")]
-    [InlineData("ImageMagicFEditor_MagicAnimeExport_Button")]
-    [InlineData("ImageMagicFEditor_OpenSource_Button")]
-    [InlineData("ImageMagicFEditor_SelectSource_Button")]
-    [InlineData("ImageMagicFEditor_MagicListExpand_Button")]
-    public void View_DeferredButton_IsDisabledAndReferencesFollowupIssue(string id)
+    /// <summary>
+    /// Import button is now WIRED in #881 — no longer disabled or stub-referenced.
+    /// Gated at runtime by UpdateWriteControlsEnabled (magic-system patch required).
+    /// </summary>
+    [Fact]
+    public void View_ImportButton_IsWired_NotDisabled()
     {
-        // Simple regex check on the raw AXAML text — looks at the
-        // Button element with the given AutomationId AutomationId and
-        // verifies the same element carries IsEnabled="False" plus a
-        // ToolTip.Tip attribute mentioning #500.
+        const string id = "ImageMagicFEditor_MagicAnimeImport_Button";
         string axaml = ReadAxaml();
-        // Match the <Button … AutomationId="<id>" … /> element body
-        // (everything between this opening tag's start and the next
-        // unrelated tag's start) so we can inspect its attributes.
         var pattern = new Regex(
             @"<Button[^>]*AutomationId=""" + Regex.Escape(id) + @"""[^>]*?/>",
             RegexOptions.Singleline);
         var match = pattern.Match(axaml);
         Assert.True(match.Success,
             $"Expected a <Button AutomationId=\"{id}\" .../> element");
-        Assert.Contains("IsEnabled=\"False\"", match.Value);
-        Assert.Contains("ToolTip.Tip=", match.Value);
-        Assert.Contains("#500", match.Value);
+        // #881: Import is no longer hard-coded disabled.
+        Assert.DoesNotContain("IsEnabled=\"False\"", match.Value);
+        // Must have a wired click handler.
+        Assert.Contains("Click=\"MagicAnimeImport_Click\"", match.Value);
+    }
+
+    /// <summary>
+    /// #881 — Code-behind MagicAnimeImport_Click calls MagicEffectImportCore and uses
+    /// the undo service atomically (one Begin/Commit/Rollback scope per import).
+    /// </summary>
+    [Fact]
+    public void View_ImportHandler_CallsMagicEffectImportCore_AndUsesUndoService()
+    {
+        string source = ReadCodeBehind();
+        // Must call the Core import function.
+        Assert.Contains("MagicEffectImportCore.ImportMagicScript", source);
+        Assert.Contains("MagicEffectImportCore.ParseMagicScript", source);
+        // Must use atomic undo scope.
+        Assert.Contains("_undoService.Begin", source);
+        Assert.Contains("_undoService.Commit", source);
+        Assert.Contains("_undoService.Rollback", source);
+        // Must have the injectable DoImport entry point (used by tests).
+        Assert.Contains("DoImport", source);
+    }
+
+    /// <summary>
+    /// #881 — Code-behind has snapshot-restore logic on import failure.
+    /// Mirrors #871/#874/#877 pattern.
+    /// </summary>
+    [Fact]
+    public void View_ImportHandler_HasSnapshotRestoreOnFailure()
+    {
+        string source = ReadCodeBehind();
+        Assert.Contains("snapshot", source);
+        Assert.Contains("Array.Copy(snapshot", source);
+    }
+
+    /// <summary>
+    /// Export button is now wired in #878 PR1 — no longer disabled or #500-referenced.
+    /// </summary>
+    [Fact]
+    public void View_ExportButton_IsWired_NotDeferred()
+    {
+        const string id = "ImageMagicFEditor_MagicAnimeExport_Button";
+        string axaml = ReadAxaml();
+        var pattern = new Regex(
+            @"<Button[^>]*AutomationId=""" + Regex.Escape(id) + @"""[^>]*?/>",
+            RegexOptions.Singleline);
+        var match = pattern.Match(axaml);
+        Assert.True(match.Success, "Export button must exist in AXAML");
+        Assert.DoesNotContain("IsEnabled=\"False\"", match.Value);
+        Assert.DoesNotContain("#500", match.Value);
+        Assert.Contains("Click=\"MagicAnimeExport_Click\"", match.Value);
+    }
+
+    /// <summary>
+    /// OpenSource/SelectSource buttons use IsVisible="False" (hidden until cached)
+    /// and are no longer marked #500 deferred.
+    /// </summary>
+    [Theory]
+    [InlineData("ImageMagicFEditor_OpenSource_Button")]
+    [InlineData("ImageMagicFEditor_SelectSource_Button")]
+    public void View_SourceButtons_AreWired_UseIsVisible(string id)
+    {
+        string axaml = ReadAxaml();
+        var pattern = new Regex(
+            @"<Button[^>]*AutomationId=""" + Regex.Escape(id) + @"""[^>]*?/>",
+            RegexOptions.Singleline);
+        var match = pattern.Match(axaml);
+        Assert.True(match.Success,
+            $"Expected a <Button AutomationId=\"{id}\" .../> element");
+        Assert.Contains("IsVisible=\"False\"", match.Value);
+        Assert.DoesNotContain("IsEnabled=\"False\"", match.Value);
+        Assert.DoesNotContain("#500", match.Value);
+    }
+
+    /// <summary>
+    /// #837 — the MagicListExpand button is now WIRED: the AXAML element no
+    /// longer hard-codes IsEnabled="False" nor references the stale #500
+    /// follow-up (enablement is driven at runtime by
+    /// UpdateWriteControlsEnabled), and the Click handler is bound.
+    /// </summary>
+    [Fact]
+    public void View_MagicListExpandButton_IsWired()
+    {
+        string axaml = ReadAxaml();
+        var pattern = new Regex(
+            @"<Button[^>]*AutomationId=""ImageMagicFEditor_MagicListExpand_Button""[^>]*?/>",
+            RegexOptions.Singleline);
+        var match = pattern.Match(axaml);
+        Assert.True(match.Success, "Expected the MagicListExpand button element");
+        Assert.DoesNotContain("IsEnabled=\"False\"", match.Value);
+        Assert.DoesNotContain("#500", match.Value);
+        Assert.Contains("Click=\"MagicListExpand_Click\"", match.Value);
     }
 
     // -----------------------------------------------------------------

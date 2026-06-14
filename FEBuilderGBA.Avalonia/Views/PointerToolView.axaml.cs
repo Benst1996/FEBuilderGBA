@@ -53,7 +53,7 @@ namespace FEBuilderGBA.Avalonia.Views
             }
             catch (Exception ex)
             {
-                Log.Error("PointerToolView.Batch_Click: {0}", ex.Message);
+                Log.Error($"PointerToolView.Batch_Click: {ex}");
             }
         }
 
@@ -79,7 +79,7 @@ namespace FEBuilderGBA.Avalonia.Views
             }
             catch (Exception ex)
             {
-                Log.Error("PointerToolView.WhatIs_Click: {0}", ex.Message);
+                Log.Error($"PointerToolView.WhatIs_Click: {ex}");
             }
         }
 
@@ -117,7 +117,7 @@ namespace FEBuilderGBA.Avalonia.Views
             catch (Exception ex)
             {
                 _undoService.Rollback();
-                Log.Error("PointerToolView.Write_Click: {0}", ex.Message);
+                Log.Error($"PointerToolView.Write_Click: {ex}");
                 CoreState.Services?.ShowError(
                     $"Write failed: {ex.Message}");
                 // Do not rethrow — the UI thread should keep running.
@@ -151,7 +151,28 @@ namespace FEBuilderGBA.Avalonia.Views
             }
             catch (Exception ex)
             {
-                Log.Error("PointerToolView.LoadOtherRom_Click: {0}", ex.Message);
+                Log.Error($"PointerToolView.LoadOtherRom_Click: {ex}");
+            }
+        }
+
+        /// <summary>
+        /// Auto Search button (#1113) — runs the full cross-ROM AutoSearch
+        /// (ASM-map name search + source/target LDR-literal-pool symmetry +
+        /// auto-tracking retry) against the loaded target ROM, populating the
+        /// OtherROM* fields and the AutoSearchSummary label. Wrapped in
+        /// try/catch + Log.Error like the other handlers so the UI thread never
+        /// crashes.
+        /// </summary>
+        void AutoSearch_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                _vm.AddressInput = AddressTextBox.Text ?? "";
+                _vm.RunAutoSearch();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"PointerToolView.AutoSearch_Click: {ex}");
             }
         }
 
@@ -178,7 +199,7 @@ namespace FEBuilderGBA.Avalonia.Views
             }
             catch (Exception ex)
             {
-                Log.Error("PointerToolView.AddressDoubleClick: {0}", ex.Message);
+                Log.Error($"PointerToolView.AddressDoubleClick: {ex}");
             }
         }
 
@@ -194,6 +215,41 @@ namespace FEBuilderGBA.Avalonia.Views
             _vm.MarkClean();
         }
 
-        public void SelectFirstItem() { }
+        /// <summary>
+        /// Called by the <c>--screenshot-all</c> harness after the window opens.
+        /// In screenshot mode (and only then) seed a representative cross-ROM
+        /// state so the OtherROM* fields render populated in the PNG (#966).
+        /// The interactive runtime path never enters this branch.
+        /// </summary>
+        public void SelectFirstItem()
+        {
+            if (!App.ScreenshotAllMode) return;
+            // try/FINALLY so IsLoading is ALWAYS reset even if the seeding body
+            // throws — otherwise the VM stays stuck "loading" for the rest of
+            // the --screenshot-all harness run (#969 review point 1).
+            _vm.IsLoading = true;
+            try
+            {
+                _vm.SeedDemoCrossRom();
+                AddressTextBox.Text = _vm.AddressInput;
+                // #1026: also resolve a real ASM/MAP symbol so the captured PNG
+                // shows a "Symbol:" line in the bound result TextBlock. This may
+                // move AddressInput to the symbol's address, so re-sync the box.
+                _vm.SeedDemoWhatIs();
+                AddressTextBox.Text = _vm.AddressInput;
+                _vm.MarkClean();
+            }
+            catch (Exception ex)
+            {
+                // Log.Error is params string[] (NO composite formatting) — a
+                // literal "{0}" would be written verbatim, so use a single
+                // interpolated string (#969 review point 1).
+                Log.Error($"PointerToolView.SelectFirstItem: {ex}");
+            }
+            finally
+            {
+                _vm.IsLoading = false;
+            }
+        }
     }
 }

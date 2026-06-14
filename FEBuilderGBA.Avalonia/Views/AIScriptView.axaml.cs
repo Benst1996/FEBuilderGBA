@@ -11,6 +11,7 @@ using global::Avalonia.Controls;
 using global::Avalonia.Input;
 using global::Avalonia.Interactivity;
 using global::Avalonia.Platform.Storage;
+using FEBuilderGBA.Avalonia.Dialogs;
 using FEBuilderGBA.Avalonia.Services;
 using FEBuilderGBA.Avalonia.ViewModels;
 
@@ -266,14 +267,88 @@ namespace FEBuilderGBA.Avalonia.Views
         // List expansion
         // -----------------------------------------------------------------
 
-        void ListExpand_Click(object? sender, RoutedEventArgs e)
+        /// <summary>
+        /// List-expansion handler (#1020). Prompts the user for a new pointer-slot
+        /// count, delegates to <see cref="AIScriptViewModel.ExpandList"/> inside an
+        /// <see cref="UndoService"/> scope, then reloads the list. Mirrors WF
+        /// <c>AIScriptForm.AddressListExpandsEventNoCopyPointer</c> (prompt ->
+        /// ExpandTableTo -> repoint ai*[3] -> reload) and the
+        /// <c>ImageMapActionAnimationView.ListExpand_Click</c> flow.
+        /// </summary>
+        async void ListExpand_Click(object? sender, RoutedEventArgs e)
         {
-            // Bringing the pointer table expand path live requires the same
-            // P4-clearing logic the WF AddressListExpandsEventNoCopyPointer
-            // handler runs. That logic is host-coupled to InputFormRef. For
-            // now we surface an informational message so the parity surface
-            // exists without risking a partial-expand on the live ROM.
-            CoreState.Services.ShowInfo("List Expand is reserved — use the WinForms editor to expand the AI pointer table for now.");
+            try
+            {
+                if (!_vm.IsLoaded)
+                {
+                    CoreState.Services?.ShowInfo(R._("Load a ROM first."));
+                    return;
+                }
+                // Drive the prompt + expansion from the ACTUAL loaded list size, NOT
+                // _vm.ReadCount: the editor's "Read Count" can be 0 ("no cap") or exceed
+                // the dialog max after a user-driven reload, which would either treat a
+                // non-empty list as empty or pass an invalid min>max range to the dialog
+                // (which does not validate its inputs). #1056 review.
+                uint currentCount = (uint)EntryList.ItemCount;
+                if (currentCount == 0)
+                {
+                    CoreState.Services?.ShowInfo(R._("Cannot expand: list is empty."));
+                    return;
+                }
+
+                // Max mirrors the Read Count NUD's ReadCountMaximum (4096), clamped up to
+                // currentCount so min never exceeds max. ExpandTableTo fails gracefully
+                // when there is insufficient free space.
+                uint maxCount = System.Math.Max(4096u, currentCount);
+                uint defaultCount = currentCount + 1;
+                if (defaultCount > maxCount) defaultCount = maxCount;
+                uint? chosen = await NumberInputDialog.Show(
+                    this,
+                    R._("Enter the new entry count for the AI pointer table (current: {0}, max: {1}).",
+                        currentCount, maxCount),
+                    R._("List Expansion"),
+                    defaultCount,
+                    currentCount,
+                    maxCount);
+                if (chosen == null) return; // user cancelled
+                uint newCount = chosen.Value;
+                if (newCount == currentCount)
+                {
+                    CoreState.Services?.ShowInfo(R._("No change: new count equals current count."));
+                    return;
+                }
+
+                // Re-sync the VM's current count to the actual list size so ExpandList
+                // copies the FULL table (it uses _vm.ReadCount as the old row count).
+                _vm.ReadCount = currentCount;
+
+                _undoService.Begin("Expand AI Script List");
+                try
+                {
+                    string err = _vm.ExpandList(newCount, _undoService.GetActiveUndoData());
+                    if (!string.IsNullOrEmpty(err))
+                    {
+                        _undoService.Rollback();
+                        CoreState.Services?.ShowError(err);
+                        return;
+                    }
+                    _undoService.Commit();
+                    _vm.MarkClean();
+                    LoadList();
+                    CoreState.Services?.ShowInfo(
+                        R._("Expanded AI pointer table to {0} entries.", newCount));
+                }
+                catch (Exception inner)
+                {
+                    _undoService.Rollback();
+                    Log.Error("AIScriptView.ListExpand_Click inner failed: {0}", inner.Message);
+                    CoreState.Services?.ShowError(R._("List expansion failed: {0}", inner.Message));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("AIScriptView.ListExpand_Click failed: {0}", ex.Message);
+            }
         }
 
         // -----------------------------------------------------------------
@@ -507,15 +582,18 @@ namespace FEBuilderGBA.Avalonia.Views
                 string? path = file?.TryGetLocalPath();
                 if (string.IsNullOrEmpty(path)) return;
 
-                // Stub export: dump CurrentAddr + ReadByteCount header. The
-                // full byte-for-byte AI script dump requires the WinForms
-                // EventScript.DisAssemble pipeline; we emit a placeholder so
-                // the file-write surface is at parity with the WF affordance.
-                System.IO.File.WriteAllText(path,
-                    $"// AI Script export\n" +
-                    $"// Address: 0x{_vm.CurrentAddr:X08}\n" +
-                    $"// Bytes: {_vm.ReadByteCount}\n");
-                CoreState.Services.ShowInfo($"AI script header exported to {path}");
+                // Full per-opcode dump (WF AIScriptForm.EventToTextAll parity):
+                // one line per 16-byte opcode — hex bytes + tab + //script-name
+                // + decoded args + comment. ExportToText lazily disassembles the
+                // loaded script when the in-memory model is empty.
+                string content = _vm.ExportToText();
+                if (string.IsNullOrEmpty(content))
+                {
+                    CoreState.Services.ShowInfo(R._("There is no AI script to export. Re-read the script first."));
+                    return;
+                }
+                System.IO.File.WriteAllText(path, content);
+                CoreState.Services.ShowInfo($"{R._("AI script exported to")} {path}");
             }
             catch (Exception ex)
             {
@@ -525,6 +603,15 @@ namespace FEBuilderGBA.Avalonia.Views
 
         async void Import_Click(object? sender, RoutedEventArgs e)
         {
+            // Require a loaded script (same guard as Export). Without a loaded
+            // pointer slot / CurrentAddr, an import would populate a model whose
+            // rows show 0x000000 addresses and a later Write would have no
+            // target slot to persist to (Copilot bot review).
+            if (!_vm.IsLoaded)
+            {
+                CoreState.Services.ShowInfo(R._("Re-read the AI script before importing."));
+                return;
+            }
             try
             {
                 var txtType = new FilePickerFileType(R._("Text Files")) { Patterns = new[] { "*.txt", "*.event" } };
@@ -539,12 +626,25 @@ namespace FEBuilderGBA.Avalonia.Views
                 string? path = files[0].TryGetLocalPath();
                 if (string.IsNullOrEmpty(path)) return;
 
-                // Stub import: parse header bytes only. Full byte-stream
-                // import requires the WF AIScript.DisAssemble path which is
-                // WinForms-coupled.
+                // Full byte-stream import (WF AIScriptForm.FileToEvent parity):
+                // parse each hex line, rebuild the in-memory opcode model, and
+                // refresh the Disassembly list. NO ROM write — the user clicks
+                // the Write button to persist (preserving the undo flow).
+                string text = System.IO.File.ReadAllText(path);
+                int count = _vm.ImportFromText(text);
+                if (count <= 0)
+                {
+                    CoreState.Services.ShowError(R._("No valid AI opcodes were found in the selected file."));
+                    return;
+                }
+
+                // Refresh from the in-memory model (NOT a ROM re-read) so the
+                // imported opcodes are visible before any Write. Sync the
+                // Address / byte-count boxes to the (unchanged) load location.
+                DisassemblyList.ItemsSource = _vm.GetDisplayLines();
+                UpdateUI();
                 CoreState.Services.ShowInfo(
-                    "AI script import will fully populate once the Core extraction lands. " +
-                    $"Selected file: {path}");
+                    $"{R._("Imported AI opcodes:")} {count}. {R._("Press Write to save to ROM.")}");
             }
             catch (Exception ex)
             {

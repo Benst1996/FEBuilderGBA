@@ -76,6 +76,10 @@ namespace FEBuilderGBA.Avalonia.Views
             ItemDropCheck.IsCheckedChanged += ItemDropCheck_IsCheckedChanged;
             UnitGrowthBox.ValueChanged += UnitGrowthBox_ValueChanged;
 
+            // FE8 after-coord (move-path) list (#1017). Bound to the VM's
+            // ObservableCollection so Add/Remove + per-row edits flow through.
+            AfterCoordsList.ItemsSource = _vm.AfterCoords;
+
             Opened += (_, _) => LoadMapList();
         }
 
@@ -237,6 +241,10 @@ namespace FEBuilderGBA.Avalonia.Views
             AI4DescLabel.Text = "";
             ItemDropLabel.Text = "";
             CommentBox.Text = "";
+            // Hide + clear the FE8 after-coord panel when no unit is loaded
+            // (#1017). The VM clears _vm.AfterCoords on the next LoadEntry.
+            AfterCoordsPanel.IsVisible = false;
+            UpdateRemoveCoordEnabled();
             // Reset VM loaded state so Write_Click cannot commit changes
             // against a stale CurrentAddr after the user moves to an empty
             // group (Copilot bot review round 3 on PR #540: WriteEntry
@@ -287,6 +295,12 @@ namespace FEBuilderGBA.Avalonia.Views
                 AI3DescLabel.Text = _vm.AI3Desc;
                 AI4DescLabel.Text = _vm.AI4Desc;
                 ItemDropLabel.Text = _vm.ItemDropDisplay;
+
+                // FE8 after-coord (move-path) list (#1017). The VM has already
+                // rebuilt _vm.AfterCoords in LoadEntry; only the panel
+                // visibility + Remove-button enable state are view concerns.
+                AfterCoordsPanel.IsVisible = _vm.IsFE8;
+                UpdateRemoveCoordEnabled();
             }
             finally { _suppressUiSync = false; }
         }
@@ -327,6 +341,56 @@ namespace FEBuilderGBA.Avalonia.Views
                 _undoService.Rollback();
                 Log.Error("EventUnitView.Write failed: {0}", ex.Message);
             }
+        }
+
+        // ---------------------------------------------------------------
+        // FE8 after-coord (move-path) list editing (#1017). The grid binds
+        // each row two-way, so per-cell edits flow into the VM rows directly;
+        // Add/Remove mutate the VM ObservableCollection (bound to the ListBox).
+        // The Write button persists the whole list with the rest of the block
+        // under ONE _undoService scope (see Write_Click -> WriteEntry).
+        // ---------------------------------------------------------------
+
+        void AddCoord_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (!_vm.IsFE8) return;
+                _vm.AddCoord();
+                UpdateRemoveCoordEnabled();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("EventUnitView.AddCoord_Click failed: {0}", ex.Message);
+            }
+        }
+
+        void RemoveCoord_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (!_vm.IsFE8) return;
+                int idx = AfterCoordsList.SelectedIndex;
+                if (idx <= 0) return; // never remove the START row (index 0)
+                _vm.RemoveCoord(idx);
+                UpdateRemoveCoordEnabled();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("EventUnitView.RemoveCoord_Click failed: {0}", ex.Message);
+            }
+        }
+
+        void AfterCoordsList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            UpdateRemoveCoordEnabled();
+        }
+
+        /// <summary>Remove is enabled only when an after-row (index >= 1) is
+        /// selected — the synthetic START row (index 0) can never be removed.</summary>
+        void UpdateRemoveCoordEnabled()
+        {
+            RemoveCoordBtn.IsEnabled = _vm.IsFE8 && AfterCoordsList.SelectedIndex >= 1;
         }
 
         // ---------------------------------------------------------------
@@ -521,12 +585,24 @@ namespace FEBuilderGBA.Avalonia.Views
             try
             {
                 // WF: InputFormRef.JumpForm<MonsterProbabilityForm>((uint)this.B1.Value, "AddressList", this.B1)
-                // The class_id (B1) is used as the row index in MonsterProbability's
-                // AddressList for pre-selection. We open the viewer without
-                // an explicit address because the Avalonia equivalent does
-                // not currently expose row-index navigation (tracked as a
-                // known limitation — see PR body).
-                WindowManager.Instance.Open<MonsterProbabilityViewerView>();
+                // The class_id (B1) is used as the AddressList ROW INDEX for
+                // pre-selection (selectedID == class_id). We resolve that row
+                // index to the matching Monster Probability entry address via
+                // ResolveAddressByClassIndex (LoadMonsterProbabilityList's
+                // 12-byte stride) and Navigate so the viewer opens on the
+                // class_id-indexed row, falling back to a plain open when the
+                // class_id is out of range / the table is unavailable.
+                // Read the LIVE control (B1) like WF (`this.B1.Value`) and the
+                // sibling jump handlers (UnitIDBox.Value): the VM's cached
+                // class_id only syncs from ClassIDBox on load / to the VM on
+                // Write, so reading it would be STALE if the user edits B1 then
+                // jumps before writing — always read the displayed control.
+                uint classId = (uint)(ClassIDBox.Value ?? 0);  // B1
+                uint addr = new MonsterProbabilityViewerViewModel().ResolveAddressByClassIndex(classId);
+                if (addr != U.NOT_FOUND)
+                    WindowManager.Instance.Navigate<MonsterProbabilityViewerView>(addr);
+                else
+                    WindowManager.Instance.Open<MonsterProbabilityViewerView>();
             }
             catch (Exception ex)
             {

@@ -82,6 +82,45 @@ namespace FEBuilderGBA.CLI
         }
 
         /// <summary>
+        /// Open a decomp project directory: detect it, resolve its built ROM, load
+        /// that ROM as a read-only preview, and run full init.
+        /// Returns false (with a ShowError) on any fault. #1129 slice 1.
+        /// </summary>
+        public static bool LoadProject(string dir)
+        {
+            var project = DecompProjectDetector.Detect(dir);
+            if (project == null)
+            {
+                CoreState.Services.ShowError($"Not a decomp project directory: {dir}");
+                return false;
+            }
+
+            var resolved = DecompProjectDetector.ResolveBuiltRom(dir, project);
+            if (resolved.Status == DecompResolveStatus.NotBuilt)
+            {
+                CoreState.Services.ShowError("Project found but no built ROM — run the build first (e.g. `make`), then reload.");
+                return false;
+            }
+            if (resolved.Status != DecompResolveStatus.Ok)
+            {
+                CoreState.Services.ShowError($"Not a decomp project directory: {dir}");
+                return false;
+            }
+
+            project.BuiltRomPath = resolved.Path;
+            CoreState.DecompProject = project;
+
+            if (!LoadRom(resolved.Path, project.ForceVersion))
+            {
+                CoreState.DecompProject = null;
+                return false;
+            }
+
+            InitFull();
+            return true;
+        }
+
+        /// <summary>
         /// Full initialization after ROM is loaded.
         /// Wires caches, Huffman tree, text encoding, event scripts, flag cache, etc.
         /// Call this after LoadRom() succeeds for commands that need full ROM access.
@@ -183,6 +222,11 @@ namespace FEBuilderGBA.CLI
             {
                 Log.Error("Failed to init EventScripts: {0}", ex.Message);
             }
+
+            // #1035: wire the patch-scan hardcode cache (replacing the no-op
+            // HeadlessAsmMapCache). Lazy — it only scans config/patch2 on the
+            // first IsHardCode* read, so this is cheap to set up here.
+            CoreState.AsmMapFileAsmCache = new CoreAsmMapCache(CoreState.ROM);
         }
     }
 }

@@ -86,22 +86,27 @@
               <Button AutomationProperties.AutomationId="SongTrack_Import_Button"
                       Name="ImportButton" Content="Import Music File"
                       Width="140" Click="ImportMidi_Click"
-                      ToolTip.Tip="Imports MIDI files (preview only). Full Import dispatch (MIDI / Wave / Instrument) pending Core extraction." />
+                      ToolTip.Tip="Imports by file extension: a MIDI (.mid), a raw RIFF WAV (.wav, builds a one-track song that plays the sample), an instrument set (.instrument), or a SondFont source (.s, pick an instrument set then assemble)." />
               <Button AutomationProperties.AutomationId="SongTrack_Export_Button"
                       Name="ExportButton" Content="Export Music File"
                       Width="140" Click="ExportMidi_Click" />
-              <Button AutomationProperties.AutomationId="SongTrack_SappyPlay_Button"
-                      Name="SappyPlayButton" Content="Play in Sappy"
-                      Width="120" IsEnabled="False"
-                      ToolTip.Tip="Pending Core extraction (Sappy emulator integration is WinForms-only)." />
+              <!-- #1014: Sappy emulator playback is Windows-only (user32 P/Invoke).
+                   The button stays disabled; the tooltip lives on this ENABLED
+                   Border, since a disabled Avalonia control won't surface its own
+                   tooltip on hover (#997/#1011 pattern). -->
+              <Border ToolTip.Tip="Sappy emulator playback is Windows-only (user32 P/Invoke); use the WinForms version of FEBuilderGBA.">
+                <Button AutomationProperties.AutomationId="SongTrack_SappyPlay_Button"
+                        Name="SappyPlayButton" Content="Play in Sappy"
+                        Width="120" IsEnabled="False" />
+              </Border>
               <Button AutomationProperties.AutomationId="SongTrack_OpenSourceFile_Button"
                       Name="OpenSourceFileButton" Content="Open Source File"
-                      Width="120" IsEnabled="False"
-                      ToolTip.Tip="Pending Core extraction (ResourceCache shell integration)." />
+                      Width="120" Click="OpenSource_Click"
+                      IsVisible="{Binding IsSourceFileAvailable}" />
               <Button AutomationProperties.AutomationId="SongTrack_OpenSourceFolder_Button"
                       Name="OpenSourceFolderButton" Content="Open Source Folder"
-                      Width="120" IsEnabled="False"
-                      ToolTip.Tip="Pending Core extraction (ResourceCache shell integration)." />
+                      Width="120" Click="SelectSource_Click"
+                      IsVisible="{Binding IsSourceFileAvailable}" />
             </StackPanel>
 
             <!-- All Tracks jump label (clickable, mirrors WF AllTracksLabel) -->

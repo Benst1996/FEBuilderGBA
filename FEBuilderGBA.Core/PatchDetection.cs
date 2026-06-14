@@ -230,6 +230,69 @@ namespace FEBuilderGBA
             return HasBG256ColorPatch(CoreState.ROM);
         }
 
+        // ---- Map second palette (Flag0x28) patch detection ----
+        // Mirrors WinForms PatchUtil.SearchFlag0x28ToMapSecondPalettePatch.
+        // Controls the per-map record offset of the second-palette PLIST
+        // byte (offset 146 vs offset 45). Used by the map-PLIST label
+        // resolver (#952) to read PLists.palette2_plist from the correct
+        // offset, exactly like WF MapSettingForm.GetMapPListsWhereAddr.
+
+        public enum MapSecondPalette_extends
+        {
+            NO,             // patch not installed (no second palette)
+            Flag0x28_146,   // second-palette PLIST byte at map-record offset 146
+            Flag0x28_45,    // second-palette PLIST byte at map-record offset 45
+            NoCache = (int)NO_CACHE
+        }
+
+        static readonly PatchTableSt[] MapSecondPaletteTable = new PatchTableSt[] {
+            new PatchTableSt{ name="Flag0x28_146", ver = "FE8J", addr = 0x19628, data = new byte[]{0x00, 0x4A}},
+            new PatchTableSt{ name="Flag0x28_45",  ver = "FE8J", addr = 0x19628, data = new byte[]{0x00, 0x49}},
+            new PatchTableSt{ name="Flag0x28_146", ver = "FE8U", addr = 0x19950, data = new byte[]{0x00, 0x4A}},
+            new PatchTableSt{ name="Flag0x28_45",  ver = "FE8U", addr = 0x19950, data = new byte[]{0x00, 0x49}},
+        };
+
+        static MapSecondPalette_extends g_Cache_MapSecondPalette = MapSecondPalette_extends.NoCache;
+
+        public static void ClearCacheMapSecondPalette()
+        {
+            g_Cache_MapSecondPalette = MapSecondPalette_extends.NoCache;
+        }
+
+        /// <summary>
+        /// Ambient-ROM detection (cached). Reads <see cref="CoreState.ROM"/>.
+        /// Mirrors WinForms <c>PatchUtil.SearchFlag0x28ToMapSecondPalettePatch()</c>.
+        /// </summary>
+        public static MapSecondPalette_extends SearchFlag0x28ToMapSecondPalettePatch()
+        {
+            if (g_Cache_MapSecondPalette == MapSecondPalette_extends.NoCache)
+            {
+                g_Cache_MapSecondPalette = SearchFlag0x28ToMapSecondPalettePatch(CoreState.ROM);
+            }
+            return g_Cache_MapSecondPalette;
+        }
+
+        /// <summary>
+        /// ROM-explicit detection (non-caching). Returns
+        /// <see cref="MapSecondPalette_extends.NO"/> on null ROM or any
+        /// non-FE8J/FE8U version (the signature table only covers FE8J/FE8U,
+        /// matching WF — FE6/FE7 never have the second-palette patch).
+        /// </summary>
+        public static MapSecondPalette_extends SearchFlag0x28ToMapSecondPalettePatch(ROM rom)
+        {
+            if (rom?.RomInfo == null) return MapSecondPalette_extends.NO;
+            string version = rom.RomInfo.VersionToFilename;
+            foreach (PatchTableSt t in MapSecondPaletteTable)
+            {
+                if (t.ver != version) continue;
+                byte[] data = rom.getBinaryData(t.addr, t.data.Length);
+                if (U.memcmp(t.data, data) != 0) continue;
+                if (t.name == "Flag0x28_146") return MapSecondPalette_extends.Flag0x28_146;
+                if (t.name == "Flag0x28_45")  return MapSecondPalette_extends.Flag0x28_45;
+            }
+            return MapSecondPalette_extends.NO;
+        }
+
         // ---- Generic patch search helpers ----
 
         public static bool SearchPatchBool(PatchTableSt[] table)
@@ -293,6 +356,7 @@ namespace FEBuilderGBA
             g_Cache_draw_font_enum = draw_font_enum.NoCache;
             g_Cache_TextEngineRework_enum = TextEngineRework_enum.NoCache;
             g_Cache_ExtendsBattleBG = ExtendsBattleBG_extends.NoCache;
+            g_Cache_MapSecondPalette = MapSecondPalette_extends.NoCache;
         }
 
         // ---- OPClassReel patch detectors (extracted from PatchUtil for gap-sweep #419) ----
@@ -331,6 +395,73 @@ namespace FEBuilderGBA
         public static bool OPClassReelSortPatchDetect(ROM rom)
         {
             return SearchPatchBool(rom, OPClassReelSortPatchTable);
+        }
+
+        // ---- ChapterNameToText patch detector (#1029) ----
+        // Cross-platform port of WinForms PatchUtil.SearchChapterNameToTextPatch.
+        // Used as the headless default precondition for the JP chapter-name wipe
+        // (ToolTranslateROMCore.WipeJPTitle): the wipe rewrites chapter-title
+        // pointers to text only when this patch is installed, mirroring WF
+        // HowDoYouLikePatchForm.CheckAndShowPopupDialog(ChapterNameText) which
+        // returns true only when the patch is present / freshly installed.
+
+        static readonly PatchTableSt[] ChapterNameToTextPatchTable = new PatchTableSt[] {
+            new PatchTableSt{ name="ChapterNameToText", ver = "FE8J", addr = 0x8B894, data = new byte[]{0x00, 0x4B, 0x18, 0x47}},
+            new PatchTableSt{ name="ChapterNameToText", ver = "FE8U", addr = 0x89624, data = new byte[]{0x00, 0x4B, 0x18, 0x47}},
+        };
+
+        /// <summary>
+        /// True when the "ChapterNameToText" patch (FE8J or FE8U) is installed in
+        /// <paramref name="rom"/>. Cross-platform port of WinForms
+        /// <c>PatchUtil.SearchChapterNameToTextPatch</c>. Returns false on null
+        /// ROM and on any non-FE8 version (signature table only contains FE8J/U).
+        /// </summary>
+        public static bool SearchChapterNameToTextPatch(ROM rom)
+        {
+            return SearchPatchBool(rom, ChapterNameToTextPatchTable);
+        }
+
+        // ---- AntiHuffman (un-Huffman) patch detector (#1028 Slice D) ----
+        //
+        // Cross-platform port of WinForms PatchUtil.SearchAntiHuffmanPatch_Low
+        // (PatchUtil.cs:333-345). Detects whether the un-Huffman text patch is
+        // installed so the Text Editor's WriteText flow can decide between the
+        // Huffman-encode fallback and the "install AntiHuffman" prompt — exactly
+        // like WF TextForm.WriteText / NeedAntiHuffman.
+        //
+        // The same six signatures previously lived ONLY in Avalonia
+        // PatchDetectionService.DetectAntiHuffman; that method now delegates here
+        // so there is a single source of truth (no third copy in PatchMetadataCore,
+        // which is about config patch metadata). Covers both FE8U signatures at
+        // 0x2BA4 — the normal one and AntiHuffman_snake1.
+
+        static readonly PatchTableSt[] AntiHuffmanTable = new PatchTableSt[] {
+            new PatchTableSt{ name="AntiHuffman",        ver = "FE6",  addr = 0x384c,  data = new byte[]{0x03, 0xB5, 0x02, 0xB0}},
+            new PatchTableSt{ name="AntiHuffman",        ver = "FE7J", addr = 0x13324, data = new byte[]{0x02, 0x49, 0x28, 0x1C}},
+            new PatchTableSt{ name="AntiHuffman",        ver = "FE8J", addr = 0x2af4,  data = new byte[]{0x00, 0xB5, 0xC2, 0x0F}},
+            new PatchTableSt{ name="AntiHuffman",        ver = "FE7U", addr = 0x12C6C, data = new byte[]{0x02, 0x49, 0x28, 0x1C}},
+            new PatchTableSt{ name="AntiHuffman",        ver = "FE8U", addr = 0x2BA4,  data = new byte[]{0x00, 0xB5, 0xC2, 0x0F}},
+            new PatchTableSt{ name="AntiHuffman_snake1", ver = "FE8U", addr = 0x2ba4,  data = new byte[]{0x78, 0x47, 0xC0, 0x46}},
+        };
+
+        /// <summary>
+        /// True when the "AntiHuffman" (un-Huffman) text patch is installed in
+        /// <paramref name="rom"/>. Cross-platform port of WinForms
+        /// <c>PatchUtil.SearchAntiHuffmanPatch</c>. Returns false on null ROM and
+        /// on any version whose signature does not match. Covers both FE8U
+        /// signatures at 0x2BA4 (normal + AntiHuffman_snake1).
+        /// </summary>
+        public static bool SearchAntiHuffmanPatch(ROM rom)
+        {
+            return SearchPatchBool(rom, AntiHuffmanTable);
+        }
+
+        /// <summary>
+        /// Ambient-ROM overload. Reads <see cref="CoreState.ROM"/>.
+        /// </summary>
+        public static bool SearchAntiHuffmanPatch()
+        {
+            return SearchAntiHuffmanPatch(CoreState.ROM);
         }
 
         // ---- Class skill extends (SkillSystem) ----

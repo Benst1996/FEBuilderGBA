@@ -65,6 +65,21 @@ namespace FEBuilderGBA.Avalonia.Dialogs
             return file?.TryGetLocalPath();
         }
 
+        /// <summary>
+        /// Open a decomp project folder (#1129 slice 1). Returns the chosen
+        /// directory's local path, or null when cancelled / unavailable.
+        /// </summary>
+        public static async Task<string?> OpenProjectFolder(Window owner)
+        {
+            var folders = await owner.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = R._("Open Decomp Project"),
+                AllowMultiple = false,
+            });
+
+            return folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+        }
+
         /// <summary>Open a UPS patch file.</summary>
         public static async Task<string?> OpenPatchFile(Window owner)
         {
@@ -185,6 +200,51 @@ namespace FEBuilderGBA.Avalonia.Dialogs
             });
 
             return file?.TryGetLocalPath();
+        }
+
+        /// <summary>
+        /// Save any file with multiple format choices; returns both the chosen
+        /// path and the zero-based index of the filter the user selected (FIX 4:
+        /// drives enableComment from the chosen filter, not a filename heuristic).
+        /// Returns (-1) as filterIndex when the dialog is cancelled.
+        /// </summary>
+        public static async Task<(string? Path, int FilterIndex)> SaveFileWithFilterIndex(
+            Window owner, string title,
+            (string Name, string Pattern)[] filters, string? suggestedName = null)
+        {
+            var choices = new System.Collections.Generic.List<FilePickerFileType>(filters.Length + 1);
+            foreach (var (name, pattern) in filters)
+            {
+                choices.Add(new FilePickerFileType(name) { Patterns = new[] { pattern } });
+            }
+            choices.Add(MakeAllFileType());
+
+            var file = await owner.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = title,
+                SuggestedFileName = suggestedName,
+                FileTypeChoices = choices,
+            });
+
+            if (file == null) return (null, -1);
+
+            string? path = file.TryGetLocalPath();
+
+            // Avalonia StorageProvider does not expose the selected FileTypeChoice
+            // index directly. We infer it by matching the saved filename's extension
+            // against the filter patterns in order (first match wins). This matches
+            // the picker's own auto-append behaviour and is deterministic.
+            if (path != null)
+            {
+                string ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+                for (int i = 0; i < filters.Length; i++)
+                {
+                    string pat = filters[i].Pattern.TrimStart('*').ToLowerInvariant();
+                    if (ext == pat) return (path, i);
+                }
+            }
+
+            return (path, 0); // fallback to first filter
         }
 
         static FilePickerFileType MakeJascPalFileType() => new(R._("JASC-PAL (Aseprite/GIMP)"))

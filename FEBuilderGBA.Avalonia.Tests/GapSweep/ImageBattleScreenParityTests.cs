@@ -210,6 +210,44 @@ public class ImageBattleScreenParityTests
             RegexOptions.Singleline), code);
     }
 
+    /// <summary>
+    /// #816: each per-image preview (Image1..Image5) is now rendered LIVE via
+    /// its own GbaImageControl at its WF per-image dimensions
+    /// (ImageBattleScreenCore.RenderSingleImagePreview), replacing the 5 old
+    /// deferred placeholder labels. Each new control carries the
+    /// Image{N}_Preview_Image AutomationId; the old _Preview_Label ids are gone;
+    /// the VM exposes RenderImagePreview(n); and the code-behind refreshes all 5.
+    /// </summary>
+    [Fact]
+    public void View_HasLivePerImagePreviewImages()
+    {
+        string axaml = ReadAxaml();
+        for (int i = 1; i <= 5; i++)
+        {
+            // Each per-image preview is a live GbaImageControl.
+            Assert.Contains($"AutomationId=\"ImageBattleScreen_Image{i}_Preview_Image\"", axaml);
+            Assert.Contains($"Name=\"Image{i}Preview\"", axaml);
+            // The old deferred placeholder labels must be gone.
+            Assert.DoesNotContain($"AutomationId=\"ImageBattleScreen_Image{i}_Preview_Label\"", axaml);
+        }
+
+        // VM delegates to the Core per-image renderer.
+        string vmCode = File.ReadAllText(ViewModelPath());
+        Assert.Matches(new Regex(
+            @"public\s+IImage\s+RenderImagePreview\(int\s+\w+\)[\s\S]*?ImageBattleScreenCore\.RenderSingleImagePreview\(CoreState\.ROM,",
+            RegexOptions.Singleline), vmCode);
+
+        // Code-behind refreshes all 5 per-image previews (entry load + writes).
+        string code = File.ReadAllText(CodeBehindPath());
+        Assert.Matches(new Regex(
+            @"void\s+RefreshImagePreviews\(\)[\s\S]*?\.SetImage\(\s*_vm\.RenderImagePreview\(",
+            RegexOptions.Singleline), code);
+        // RefreshImagePreviews must be invoked on the entry-load path (OnSelected).
+        Assert.Matches(new Regex(
+            @"void\s+OnSelected[\s\S]*?RefreshImagePreviews\(\)",
+            RegexOptions.Singleline), code);
+    }
+
     [Fact]
     public void View_HasPaletteTab()
     {
@@ -248,7 +286,9 @@ public class ImageBattleScreenParityTests
         Assert.Contains("AutomationId=\"ImageBattleScreen_Image1_ZIMAGE_Input\"", axaml);
         Assert.Contains("AutomationId=\"ImageBattleScreen_Image1_Import_Button\"", axaml);
         Assert.Contains("AutomationId=\"ImageBattleScreen_Image1_Export_Button\"", axaml);
-        Assert.Contains("AutomationId=\"ImageBattleScreen_Image1_Preview_Label\"", axaml);
+        // #816: the image1 preview is now a live GbaImageControl (rendered at
+        // its natural W x H), replacing the old deferred KnownGap label.
+        Assert.Contains("AutomationId=\"ImageBattleScreen_Image1_Preview_Image\"", axaml);
     }
 
     [Fact]
@@ -356,19 +396,150 @@ public class ImageBattleScreenParityTests
             RegexOptions.Singleline), axaml);
     }
 
+    /// <summary>
+    /// #872: per-image Import/Export buttons (Image1..5) are now fully wired —
+    /// they carry Click handlers (not IsEnabled="False" stubs). This replaces the
+    /// old "IsHonestlyDeferredKnownGap" assertion.
+    /// </summary>
     [Fact]
-    public void View_PerImageImportExport_IsHonestlyDeferredKnownGap()
+    public void View_PerImageImportExport_IsWiredAndEnabled()
     {
-        // Per-image Import/Export buttons (image1..5) are also WF-coupled.
+        // Per #872: buttons are wired with Click handlers and must NOT carry
+        // the old KnownGap IsEnabled="False" stub marker.
         string axaml = ReadAxaml();
         for (int i = 1; i <= 5; i++)
         {
+            // Import button must have a Click handler.
             Assert.Matches(new Regex(
+                $@"AutomationId=""ImageBattleScreen_Image{i}_Import_Button""[\s\S]{{0,200}}Click=""Image{i}Import_Click""",
+                RegexOptions.Singleline), axaml);
+            // Export button must have a Click handler.
+            Assert.Matches(new Regex(
+                $@"AutomationId=""ImageBattleScreen_Image{i}_Export_Button""[\s\S]{{0,200}}Click=""Image{i}Export_Click""",
+                RegexOptions.Singleline), axaml);
+            // The KnownGap IsEnabled="False" stub must be gone.
+            Assert.DoesNotMatch(new Regex(
                 $@"AutomationId=""ImageBattleScreen_Image{i}_Import_Button""[\s\S]{{0,400}}IsEnabled=""False""",
                 RegexOptions.Singleline), axaml);
-            Assert.Matches(new Regex(
+            Assert.DoesNotMatch(new Regex(
                 $@"AutomationId=""ImageBattleScreen_Image{i}_Export_Button""[\s\S]{{0,400}}IsEnabled=""False""",
                 RegexOptions.Singleline), axaml);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // #994: PaletteRedo button wired, BulkRedo stays deferred.
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// #994: the PaletteRedo button is now wired to CoreState.Undo.RunRedo().
+    /// Must carry Click="PaletteRedo_Click" and must NOT contain IsEnabled="False".
+    /// </summary>
+    [Fact]
+    public void View_PaletteRedoButton_IsWiredAndEnabled()
+    {
+        string axaml = ReadAxaml();
+        var rx = new Regex(
+            "AutomationId=\"ImageBattleScreen_PaletteRedo_Button\"[\\s\\S]*?/>",
+            RegexOptions.Compiled);
+        Match m = rx.Match(axaml);
+        Assert.True(m.Success, "PaletteRedo button tag not found");
+        Assert.Contains("Click=\"PaletteRedo_Click\"", m.Value);
+        Assert.DoesNotContain("IsEnabled=\"False\"", m.Value);
+    }
+
+    /// <summary>
+    /// #994: PaletteRedo_Click handler must call CoreState.Undo.RunRedo()
+    /// and guard on CanRedo. CanRedo must appear before RunRedo() within
+    /// the PaletteRedo_Click method body.
+    /// </summary>
+    [Fact]
+    public void View_PaletteRedoHandler_CallsRunRedo()
+    {
+        string source = File.ReadAllText(CodeBehindPath());
+        Assert.Matches(new Regex(
+            @"void\s+PaletteRedo_Click[\s\S]*?CoreState\.Undo\.CanRedo",
+            RegexOptions.Compiled), source);
+        Assert.Matches(new Regex(
+            @"void\s+PaletteRedo_Click[\s\S]*?CoreState\.Undo\.RunRedo\(\)",
+            RegexOptions.Compiled), source);
+        // Extract only the PaletteRedo_Click method body to check ordering.
+        int methodStart = source.IndexOf("void PaletteRedo_Click(", StringComparison.Ordinal);
+        Assert.True(methodStart >= 0, "PaletteRedo_Click method not found");
+        int idxCanRedo = source.IndexOf("CoreState.Undo.CanRedo", methodStart, StringComparison.Ordinal);
+        int idxRunRedo = source.IndexOf("CoreState.Undo.RunRedo()", methodStart, StringComparison.Ordinal);
+        Assert.True(idxCanRedo >= 0 && idxRunRedo >= 0);
+        Assert.True(idxCanRedo < idxRunRedo, "CanRedo must appear before RunRedo()");
+    }
+
+    /// <summary>
+    /// #994 regression guard: BulkRedo stays a documented deferral (#988) —
+    /// it must still have IsEnabled="False".
+    /// </summary>
+    [Fact]
+    public void View_BulkRedoButton_StaysDocumentedDeferral()
+    {
+        string axaml = ReadAxaml();
+        Assert.Matches(new Regex(
+            "AutomationId=\"ImageBattleScreen_BulkRedo_Button\"[\\s\\S]{0,400}IsEnabled=\"False\"",
+            RegexOptions.Compiled), axaml);
+    }
+
+    /// <summary>
+    /// #994: write a palette color via WritePalette, undo it, verify CanRedo
+    /// is true, redo it, verify the palette bytes return to the edited state.
+    /// </summary>
+    [Fact]
+    public void BattleScreenPalette_EditUndoRedo_RoundTrip()
+    {
+        var rom = MakeSyntheticRom();
+        var prevRom = CoreState.ROM;
+        var prevUndo = CoreState.Undo;
+        try
+        {
+            CoreState.ROM = rom;
+            CoreState.Undo = new Undo();
+
+            var vm = new ImageBattleScreenViewModel();
+            vm.LoadEntry();
+
+            // Capture original palette color[0] from ROM.
+            byte origLo = rom.Data[0x105000];
+            byte origHi = rom.Data[0x105001];
+
+            // Edit slot 0 to a known color (pure green = R0, G248, B0).
+            vm.SetR(0, 0);
+            vm.SetG(0, 248);
+            vm.SetB(0, 0);
+
+            var undoService = new UndoService();
+            undoService.Begin("Edit Palette");
+            bool wrote = vm.WritePalette();
+            undoService.Commit();
+            Assert.True(wrote, "WritePalette must succeed");
+
+            byte editedLo = rom.Data[0x105000];
+            byte editedHi = rom.Data[0x105001];
+            Assert.False(editedLo == origLo && editedHi == origHi,
+                "ROM bytes should have changed after palette write");
+
+            // Undo.
+            CoreState.Undo.RunUndo();
+            Assert.Equal(origLo, rom.Data[0x105000]);
+            Assert.Equal(origHi, rom.Data[0x105001]);
+
+            // CanRedo must be true after undo.
+            Assert.True(CoreState.Undo.CanRedo, "CanRedo must be true after undo");
+
+            // Redo.
+            CoreState.Undo.RunRedo();
+            Assert.Equal(editedLo, rom.Data[0x105000]);
+            Assert.Equal(editedHi, rom.Data[0x105001]);
+        }
+        finally
+        {
+            CoreState.ROM = prevRom;
+            CoreState.Undo = prevUndo;
         }
     }
 

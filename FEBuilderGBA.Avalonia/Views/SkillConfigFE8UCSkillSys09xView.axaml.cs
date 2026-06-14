@@ -21,6 +21,7 @@ namespace FEBuilderGBA.Avalonia.Views
     {
         readonly SkillConfigFE8UCSkillSys09xViewModel _vm = new();
         readonly UndoService _undoService = new();
+        readonly SkillConfigAnimePreview _animePreview = new();
         bool _suppressZoomChange;
         bool _suppressFrameChange;
         Bitmap? _currentIconBitmap;
@@ -39,6 +40,7 @@ namespace FEBuilderGBA.Avalonia.Views
             {
                 DisposeBitmap(ref _currentIconBitmap);
                 DisposeBitmap(ref _currentPreviewBitmap);
+                _animePreview.Clear();
             };
         }
 
@@ -132,20 +134,27 @@ namespace FEBuilderGBA.Avalonia.Views
 
             if (_vm.IsAnimationValid)
             {
+                // #1010 — render the per-frame preview via the cross-platform
+                // READ-ONLY SkillSystemsAnimeExportCore decode (cached by anime
+                // pointer in _animePreview).
+                bool hasFrames = _animePreview.Load(CoreState.ROM, _vm.AnimationPointer);
+                int frameCount = _animePreview.FrameCount;
+                // Clamp SelectedFrame into range BEFORE rendering (a shorter
+                // animation on a same-row pointer change).
+                if (frameCount > 0 && _vm.SelectedFrame >= (uint)frameCount) _vm.SelectedFrame = (uint)(frameCount - 1);
                 _suppressFrameChange = true;
-                try { ShowFrameUpDown.Value = _vm.SelectedFrame; }
+                try
+                {
+                    ShowFrameUpDown.Maximum = Math.Max(0, frameCount - 1);
+                    ShowFrameUpDown.Value = _vm.SelectedFrame;
+                }
                 finally { _suppressFrameChange = false; }
-
                 BinInfoBox.Text = _vm.BinInfoText;
-                // Real frame rendering depends on the WinForms-only
-                // ImageUtilSkillSystemsAnimeCreator (#500). Until that
-                // moves to Core, leave the preview Image blank but show the
-                // animation address text so the user knows the pointer is
-                // valid.
-                SetPreviewBitmap(null);
+                SetPreviewBitmap(hasFrames ? _animePreview.TryGetFrameBitmap((int)_vm.SelectedFrame) : null);
             }
             else
             {
+                _animePreview.Clear();
                 SetPreviewBitmap(null);
                 BinInfoBox.Text = "";
             }
@@ -166,6 +175,10 @@ namespace FEBuilderGBA.Avalonia.Views
                 _vm.Write();
                 _undoService.Commit();
                 _vm.MarkClean();
+                // #1010 — the animation pointer may have changed; drop the
+                // cached decode and re-render the preview for the new pointer.
+                _animePreview.Clear();
+                UpdateUI();
             }
             catch (Exception ex)
             {
@@ -202,29 +215,87 @@ namespace FEBuilderGBA.Avalonia.Views
         // ListExpand_Click.
         // -----------------------------------------------------------
 
-        void ImageImport_Click(object? sender, RoutedEventArgs e)
+        // CSkillSys uses the same fixed skill-palette pointer as SkillSystem
+        // (mirrors WinForms `SkillPalettePointer = 0x22370`).
+        const uint SKILL_PALETTE_POINTER = 0x22370;
+
+        // #898 — real skill-icon Image Import/Export via the shared
+        // SkillConfigIconIoHelper. Unlike the striped SkillSystem table, the
+        // CSkillSys icon address is a GBA pointer stored at entry+0. It MUST
+        // be re-dereferenced fresh here (never write through a pointer cached
+        // across a ROM reload): byteAddr = U.toOffset(rom.u32(CurrentAddr+0)).
+        async void ImageImport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigFE8UCSkillSys09xView.ImageImport_Click invoked - disabled until Core extraction lands (#500)");
+            ROM rom = CoreState.ROM;
+            if (rom == null || rom.RomInfo == null || !_vm.IsLoaded || _vm.CurrentAddr == 0) return;
+            if (!U.isSafetyOffset(_vm.CurrentAddr + 3, rom)) return;
+            if (!U.isSafetyOffset(SKILL_PALETTE_POINTER + 3, rom)) return;
+
+            uint iconGbaPointer = rom.u32(_vm.CurrentAddr + 0);
+            if (!U.isSafetyPointer(iconGbaPointer)) return;
+            uint iconByteAddr = U.toOffset(iconGbaPointer);
+            uint paletteAddr = rom.p32(SKILL_PALETTE_POINTER);
+
+            string? err = await SkillConfigIconIoHelper.ImportIconAsync(
+                this, rom, iconByteAddr, paletteAddr, _undoService);
+            if (err == null) return; // user cancelled — do not refresh.
+            if (err != "")
+            {
+                Log.Notify("SkillConfigFE8UCSkillSys09xView.ImageImport_Click: " + err);
+                return;
+            }
+
+            UpdateUI();
+            LoadList();
+            EntryList.SelectAddress(_vm.CurrentAddr);
         }
 
-        void ImageExport_Click(object? sender, RoutedEventArgs e)
+        async void ImageExport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigFE8UCSkillSys09xView.ImageExport_Click invoked - disabled until Core extraction lands (#500)");
+            ROM rom = CoreState.ROM;
+            if (rom == null || rom.RomInfo == null || !_vm.IsLoaded || _vm.CurrentAddr == 0) return;
+            if (!U.isSafetyOffset(_vm.CurrentAddr + 3, rom)) return;
+            if (!U.isSafetyOffset(SKILL_PALETTE_POINTER + 3, rom)) return;
+
+            uint iconGbaPointer = rom.u32(_vm.CurrentAddr + 0);
+            if (!U.isSafetyPointer(iconGbaPointer)) return;
+            uint iconByteAddr = U.toOffset(iconGbaPointer);
+            uint paletteAddr = rom.p32(SKILL_PALETTE_POINTER);
+
+            await SkillConfigIconIoHelper.ExportIconAsync(this, rom, iconByteAddr, paletteAddr);
         }
 
-        void AnimationImport_Click(object? sender, RoutedEventArgs e)
+        // #913 SLICE 1 — real skill-anime import via SkillSystemsAnimeImportCore
+        // (FE8J path; FE8U shows a clean not-supported message, ZERO mutation).
+        async void AnimationImport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigFE8UCSkillSys09xView.AnimationImport_Click invoked - disabled until Core extraction lands (#500)");
+            if (!_vm.IsLoaded) return;
+            bool ok = await SkillConfigAnimeImportHelper.ImportAsync(
+                this, _vm.AnimationPointer, _undoService);
+            if (!ok) return;
+
+            // #1010 — the animation bytes changed; drop the cached decode.
+            _animePreview.Clear();
+            OnSelected(_vm.CurrentAddr);
+            LoadList();
+            EntryList.SelectAddress(_vm.CurrentAddr);
         }
 
-        void AnimationExport_Click(object? sender, RoutedEventArgs e)
+        // #910 — real animation export via SkillSystemsAnimeExportCore.
+        async void AnimationExport_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigFE8UCSkillSys09xView.AnimationExport_Click invoked - disabled until Core extraction lands (#500)");
+            if (!_vm.IsLoaded) return;
+            await SkillConfigAnimeExportHelper.ExportAsync(this, _vm.AnimationPointer, _vm.SelectedId);
         }
 
         void JumpToEditor_Click(object? sender, RoutedEventArgs e)
         {
-            Log.Debug("SkillConfigFE8UCSkillSys09xView.JumpToEditor_Click invoked - disabled until ToolAnimationCreatorView.Init lands (#500)");
+            // #1115: seed the Animation Creator from the selected skill's animation
+            // (read-only). Probe-before-open so a 0/empty pointer shows an honest
+            // message instead of a blank Creator. Replaces the #996 carve-out.
+            if (!_vm.IsLoaded) return;
+            SkillConfigAnimeJumpHelper.JumpToCreator(
+                _vm.SelectedId, _vm.AnimationPointer, "SkillConfigFE8UCSkillSys09xView");
         }
 
         void ShowFrameUpDown_ValueChanged(object? sender, NumericUpDownValueChangedEventArgs e)
@@ -233,7 +304,8 @@ namespace FEBuilderGBA.Avalonia.Views
             if (!_vm.IsAnimationValid) return;
             _vm.SelectedFrame = (uint)(ShowFrameUpDown.Value ?? 0);
             BinInfoBox.Text = _vm.BinInfoText;
-            // Real per-frame rendering pending #500.
+            // #1010 — render the selected frame from the cached decode.
+            SetPreviewBitmap(_animePreview.TryGetFrameBitmap((int)_vm.SelectedFrame));
         }
 
         void ShowZoomComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
