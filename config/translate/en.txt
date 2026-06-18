@@ -20053,3 +20053,24 @@ Enemy Army
 Gray Army
 :Four Army
 Four Army
+
+:Additional Properties JP
+Additional Properties
+
+:TODO banim additional properties tag hover JP.\r\n
+TODO banim additional properties tag hover EN. If any of these are set, anim can't be edited or exported. Can't set these here, instead import a banim with these set. Mention patch and import with AAA option.\r\n
+
+:Uncompressed palette JP
+Uncompressed palette
+
+:Uncompressed FrameData JP
+Uncompressed FrameData
+
+:Uncompressed OAMData JP
+Uncompressed OAMData
+
+:32 Colours JP
+32 Colours
+
+:Import Battle Animation with additional properties JP
+Import Battle Animation with additional properties

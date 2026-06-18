@@ -67,7 +67,13 @@
             N_ReadStartAddress = new System.Windows.Forms.NumericUpDown();
             LinkInternt = new System.Windows.Forms.Label();
             DragTargetPanel = new System.Windows.Forms.Panel();
-            N_W8 = new System.Windows.Forms.NumericUpDown();
+            banimExtendImportButton = new System.Windows.Forms.Button();
+            N_L_0_SPLITSTRING_7 = new TextBoxEx();
+            N_L_0_SPLITSTRING_11 = new TextBoxEx();
+            N_B11 = new System.Windows.Forms.NumericUpDown();
+            N_B10 = new System.Windows.Forms.NumericUpDown();
+            N_B9 = new System.Windows.Forms.NumericUpDown();
+            N_B8 = new System.Windows.Forms.NumericUpDown();
             additionalProperties = new System.Windows.Forms.Label();
             N_L_08_BIT_01 = new System.Windows.Forms.CheckBox();
             N_L_08_BIT_02 = new System.Windows.Forms.CheckBox();
@@ -103,7 +109,6 @@
             N_B2 = new System.Windows.Forms.NumericUpDown();
             N_B1 = new System.Windows.Forms.NumericUpDown();
             N_B0 = new System.Windows.Forms.NumericUpDown();
-            N_L_0_SPLITSTRING_7 = new TextBoxEx();
             numericUpDown26 = new System.Windows.Forms.NumericUpDown();
             N_P28 = new System.Windows.Forms.NumericUpDown();
             N_P24 = new System.Windows.Forms.NumericUpDown();
@@ -150,7 +155,10 @@
             ((System.ComponentModel.ISupportInitialize)N_ReadCount).BeginInit();
             ((System.ComponentModel.ISupportInitialize)N_ReadStartAddress).BeginInit();
             DragTargetPanel.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)N_W8).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)N_B11).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)N_B10).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)N_B9).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)N_B8).BeginInit();
             ((System.ComponentModel.ISupportInitialize)X_B_ANIME_PIC2).BeginInit();
             ((System.ComponentModel.ISupportInitialize)N_B7).BeginInit();
             ((System.ComponentModel.ISupportInitialize)N_B6).BeginInit();
@@ -567,7 +575,7 @@
             // LinkInternt
             // 
             LinkInternt.AutoSize = true;
-            LinkInternt.Location = new System.Drawing.Point(2, 432);
+            LinkInternt.Location = new System.Drawing.Point(1, 319);
             LinkInternt.Margin = new System.Windows.Forms.Padding(2, 0, 2, 0);
             LinkInternt.Name = "LinkInternt";
             LinkInternt.Size = new System.Drawing.Size(183, 13);
@@ -578,7 +586,13 @@
             // DragTargetPanel
             // 
             DragTargetPanel.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            DragTargetPanel.Controls.Add(N_W8);
+            DragTargetPanel.Controls.Add(banimExtendImportButton);
+            DragTargetPanel.Controls.Add(N_L_0_SPLITSTRING_7);
+            DragTargetPanel.Controls.Add(N_L_0_SPLITSTRING_11);
+            DragTargetPanel.Controls.Add(N_B11);
+            DragTargetPanel.Controls.Add(N_B10);
+            DragTargetPanel.Controls.Add(N_B9);
+            DragTargetPanel.Controls.Add(N_B8);
             DragTargetPanel.Controls.Add(additionalProperties);
             DragTargetPanel.Controls.Add(N_L_08_BIT_01);
             DragTargetPanel.Controls.Add(N_L_08_BIT_02);
@@ -615,7 +629,6 @@
             DragTargetPanel.Controls.Add(N_B2);
             DragTargetPanel.Controls.Add(N_B1);
             DragTargetPanel.Controls.Add(N_B0);
-            DragTargetPanel.Controls.Add(N_L_0_SPLITSTRING_7);
             DragTargetPanel.Controls.Add(numericUpDown26);
             DragTargetPanel.Controls.Add(N_P28);
             DragTargetPanel.Controls.Add(N_P24);
@@ -633,69 +646,129 @@
             DragTargetPanel.Size = new System.Drawing.Size(639, 454);
             DragTargetPanel.TabIndex = 68;
             // 
-            // N_W8
+            // banimExtendImportButton
             // 
-            N_W8.Enabled = false;
-            N_W8.Location = new System.Drawing.Point(199, 220);
-            N_W8.Name = "N_W8";
-            N_W8.Size = new System.Drawing.Size(43, 20);
-            N_W8.TabIndex = 208;
+            banimExtendImportButton.Location = new System.Drawing.Point(355, 384);
+            banimExtendImportButton.Margin = new System.Windows.Forms.Padding(3, 1, 3, 1);
+            banimExtendImportButton.Name = "banimExtendImportButton";
+            banimExtendImportButton.Size = new System.Drawing.Size(269, 41);
+            banimExtendImportButton.TabIndex = 214;
+            banimExtendImportButton.Text = "Import Battle Animation with additional properties JP";
+            banimExtendImportButton.UseVisualStyleBackColor = true;
+            banimExtendImportButton.Click += banimExtendImportButton_Click;
+            // 
+            // N_L_0_SPLITSTRING_7
+            // 
+            N_L_0_SPLITSTRING_7.Location = new System.Drawing.Point(108, 5);
+            N_L_0_SPLITSTRING_7.Name = "N_L_0_SPLITSTRING_7";
+            N_L_0_SPLITSTRING_7.Size = new System.Drawing.Size(123, 20);
+            N_L_0_SPLITSTRING_7.TabIndex = 213;
+            // 
+            // N_L_0_SPLITSTRING_11
+            // 
+            N_L_0_SPLITSTRING_11.Location = new System.Drawing.Point(108, 5);
+            N_L_0_SPLITSTRING_11.Name = "N_L_0_SPLITSTRING_11";
+            N_L_0_SPLITSTRING_11.Size = new System.Drawing.Size(123, 20);
+            N_L_0_SPLITSTRING_11.TabIndex = 156;
+            // 
+            // N_B11
+            // 
+            N_B11.Hexadecimal = true;
+            N_B11.Location = new System.Drawing.Point(244, 67);
+            N_B11.Margin = new System.Windows.Forms.Padding(3, 1, 3, 1);
+            N_B11.Maximum = new decimal(new int[] { 255, 0, 0, 0 });
+            N_B11.Name = "N_B11";
+            N_B11.Size = new System.Drawing.Size(43, 20);
+            N_B11.TabIndex = 212;
+            // 
+            // N_B10
+            // 
+            N_B10.Hexadecimal = true;
+            N_B10.Location = new System.Drawing.Point(199, 67);
+            N_B10.Margin = new System.Windows.Forms.Padding(3, 1, 3, 1);
+            N_B10.Maximum = new decimal(new int[] { 255, 0, 0, 0 });
+            N_B10.Name = "N_B10";
+            N_B10.Size = new System.Drawing.Size(43, 20);
+            N_B10.TabIndex = 211;
+            // 
+            // N_B9
+            // 
+            N_B9.Hexadecimal = true;
+            N_B9.Location = new System.Drawing.Point(153, 67);
+            N_B9.Margin = new System.Windows.Forms.Padding(3, 1, 3, 1);
+            N_B9.Maximum = new decimal(new int[] { 255, 0, 0, 0 });
+            N_B9.Name = "N_B9";
+            N_B9.Size = new System.Drawing.Size(43, 20);
+            N_B9.TabIndex = 210;
+            // 
+            // N_B8
+            // 
+            N_B8.Hexadecimal = true;
+            N_B8.Location = new System.Drawing.Point(108, 67);
+            N_B8.Margin = new System.Windows.Forms.Padding(3, 1, 3, 1);
+            N_B8.Maximum = new decimal(new int[] { 255, 0, 0, 0 });
+            N_B8.Name = "N_B8";
+            N_B8.Size = new System.Drawing.Size(43, 20);
+            N_B8.TabIndex = 209;
             // 
             // additionalProperties
             // 
+            additionalProperties.AccessibleDescription = "@BATTLEANIME_ADDITIONALPROPERTIES";
             additionalProperties.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            additionalProperties.Location = new System.Drawing.Point(-1, 197);
+            additionalProperties.Location = new System.Drawing.Point(0, 342);
             additionalProperties.Name = "additionalProperties";
-            additionalProperties.Size = new System.Drawing.Size(291, 23);
+            additionalProperties.Size = new System.Drawing.Size(637, 23);
             additionalProperties.TabIndex = 0;
-            additionalProperties.Text = "Additional Properties";
+            additionalProperties.Text = "Additional Properties JP";
             additionalProperties.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             // 
             // N_L_08_BIT_01
             // 
+            N_L_08_BIT_01.AutoCheck = false;
             N_L_08_BIT_01.AutoSize = true;
-            N_L_08_BIT_01.Enabled = false;
-            N_L_08_BIT_01.Location = new System.Drawing.Point(10, 223);
+            N_L_08_BIT_01.BackColor = System.Drawing.SystemColors.Control;
+            N_L_08_BIT_01.ForeColor = System.Drawing.SystemColors.ControlText;
+            N_L_08_BIT_01.Location = new System.Drawing.Point(11, 368);
             N_L_08_BIT_01.Name = "N_L_08_BIT_01";
-            N_L_08_BIT_01.Size = new System.Drawing.Size(132, 17);
+            N_L_08_BIT_01.Size = new System.Drawing.Size(147, 17);
             N_L_08_BIT_01.TabIndex = 0;
-            N_L_08_BIT_01.Text = "Uncompressed palette";
+            N_L_08_BIT_01.Text = "Uncompressed palette JP";
             N_L_08_BIT_01.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-            N_L_08_BIT_01.UseVisualStyleBackColor = true;
+            N_L_08_BIT_01.UseVisualStyleBackColor = false;
             // 
             // N_L_08_BIT_02
             // 
+            N_L_08_BIT_02.AutoCheck = false;
             N_L_08_BIT_02.AutoSize = true;
-            N_L_08_BIT_02.Enabled = false;
-            N_L_08_BIT_02.Location = new System.Drawing.Point(10, 243);
+            N_L_08_BIT_02.Location = new System.Drawing.Point(11, 388);
             N_L_08_BIT_02.Name = "N_L_08_BIT_02";
-            N_L_08_BIT_02.Size = new System.Drawing.Size(152, 17);
+            N_L_08_BIT_02.Size = new System.Drawing.Size(167, 17);
             N_L_08_BIT_02.TabIndex = 0;
-            N_L_08_BIT_02.Text = "Uncompressed FrameData";
+            N_L_08_BIT_02.Text = "Uncompressed FrameData JP";
             N_L_08_BIT_02.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             N_L_08_BIT_02.UseVisualStyleBackColor = true;
             // 
             // N_L_08_BIT_04
             // 
+            N_L_08_BIT_04.AutoCheck = false;
             N_L_08_BIT_04.AutoSize = true;
-            N_L_08_BIT_04.Enabled = false;
-            N_L_08_BIT_04.Location = new System.Drawing.Point(10, 263);
+            N_L_08_BIT_04.Location = new System.Drawing.Point(11, 408);
             N_L_08_BIT_04.Name = "N_L_08_BIT_04";
-            N_L_08_BIT_04.Size = new System.Drawing.Size(147, 17);
+            N_L_08_BIT_04.Size = new System.Drawing.Size(162, 17);
             N_L_08_BIT_04.TabIndex = 0;
-            N_L_08_BIT_04.Text = "Uncompressed OAMData";
+            N_L_08_BIT_04.Text = "Uncompressed OAMData JP";
             N_L_08_BIT_04.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             N_L_08_BIT_04.UseVisualStyleBackColor = true;
             // 
             // N_L_08_BIT_08
             // 
+            N_L_08_BIT_08.AutoCheck = false;
             N_L_08_BIT_08.AutoSize = true;
-            N_L_08_BIT_08.Enabled = false;
-            N_L_08_BIT_08.Location = new System.Drawing.Point(10, 283);
+            N_L_08_BIT_08.Location = new System.Drawing.Point(11, 428);
             N_L_08_BIT_08.Name = "N_L_08_BIT_08";
-            N_L_08_BIT_08.Size = new System.Drawing.Size(76, 17);
+            N_L_08_BIT_08.Size = new System.Drawing.Size(91, 17);
             N_L_08_BIT_08.TabIndex = 0;
-            N_L_08_BIT_08.Text = "32 Colours";
+            N_L_08_BIT_08.Text = "32 Colours JP";
             N_L_08_BIT_08.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             N_L_08_BIT_08.UseVisualStyleBackColor = true;
             // 
@@ -721,7 +794,7 @@
             // 
             // X_LZ77_INFO
             // 
-            X_LZ77_INFO.Location = new System.Drawing.Point(1, 411);
+            X_LZ77_INFO.Location = new System.Drawing.Point(0, 298);
             X_LZ77_INFO.Margin = new System.Windows.Forms.Padding(2);
             X_LZ77_INFO.Name = "X_LZ77_INFO";
             X_LZ77_INFO.ReadOnly = true;
@@ -749,6 +822,7 @@
             // 
             // X_N_JumpEditor
             // 
+            X_N_JumpEditor.AccessibleDescription = "";
             X_N_JumpEditor.Location = new System.Drawing.Point(195, 86);
             X_N_JumpEditor.Margin = new System.Windows.Forms.Padding(2);
             X_N_JumpEditor.Name = "X_N_JumpEditor";
@@ -774,7 +848,7 @@
             ShowPaletteComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             ShowPaletteComboBox.FormattingEnabled = true;
             ShowPaletteComboBox.Items.AddRange(new object[] { "自軍", "敵軍", "友軍", "第4軍" });
-            ShowPaletteComboBox.Location = new System.Drawing.Point(68, 389);
+            ShowPaletteComboBox.Location = new System.Drawing.Point(67, 276);
             ShowPaletteComboBox.Name = "ShowPaletteComboBox";
             ShowPaletteComboBox.Size = new System.Drawing.Size(113, 21);
             ShowPaletteComboBox.TabIndex = 182;
@@ -783,7 +857,7 @@
             // label7
             // 
             label7.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            label7.Location = new System.Drawing.Point(-1, 388);
+            label7.Location = new System.Drawing.Point(-2, 275);
             label7.Name = "label7";
             label7.Size = new System.Drawing.Size(69, 22);
             label7.TabIndex = 181;
@@ -795,7 +869,7 @@
             ShowZoomComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             ShowZoomComboBox.FormattingEnabled = true;
             ShowZoomComboBox.Items.AddRange(new object[] { "拡大して描画", "拡大しないで描画" });
-            ShowZoomComboBox.Location = new System.Drawing.Point(68, 369);
+            ShowZoomComboBox.Location = new System.Drawing.Point(67, 256);
             ShowZoomComboBox.Name = "ShowZoomComboBox";
             ShowZoomComboBox.Size = new System.Drawing.Size(113, 21);
             ShowZoomComboBox.TabIndex = 180;
@@ -804,7 +878,7 @@
             // label25
             // 
             label25.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            label25.Location = new System.Drawing.Point(-1, 367);
+            label25.Location = new System.Drawing.Point(-2, 254);
             label25.Name = "label25";
             label25.Size = new System.Drawing.Size(69, 22);
             label25.TabIndex = 179;
@@ -816,7 +890,7 @@
             ShowDirectionComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             ShowDirectionComboBox.FormattingEnabled = true;
             ShowDirectionComboBox.Items.AddRange(new object[] { "0=自軍(左から右)", "1=敵軍(右から左)" });
-            ShowDirectionComboBox.Location = new System.Drawing.Point(68, 347);
+            ShowDirectionComboBox.Location = new System.Drawing.Point(67, 234);
             ShowDirectionComboBox.Name = "ShowDirectionComboBox";
             ShowDirectionComboBox.Size = new System.Drawing.Size(113, 21);
             ShowDirectionComboBox.TabIndex = 178;
@@ -825,7 +899,7 @@
             // label27
             // 
             label27.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            label27.Location = new System.Drawing.Point(-1, 347);
+            label27.Location = new System.Drawing.Point(-2, 234);
             label27.Name = "label27";
             label27.Size = new System.Drawing.Size(69, 22);
             label27.TabIndex = 177;
@@ -835,7 +909,7 @@
             // label26
             // 
             label26.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            label26.Location = new System.Drawing.Point(185, 347);
+            label26.Location = new System.Drawing.Point(184, 234);
             label26.Name = "label26";
             label26.Size = new System.Drawing.Size(57, 21);
             label26.TabIndex = 175;
@@ -845,7 +919,7 @@
             // label4
             // 
             label4.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            label4.Location = new System.Drawing.Point(-1, 322);
+            label4.Location = new System.Drawing.Point(-2, 209);
             label4.Name = "label4";
             label4.Size = new System.Drawing.Size(69, 27);
             label4.TabIndex = 174;
@@ -856,7 +930,7 @@
             // 
             ShowSectionCombo.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             ShowSectionCombo.FormattingEnabled = true;
-            ShowSectionCombo.Location = new System.Drawing.Point(68, 325);
+            ShowSectionCombo.Location = new System.Drawing.Point(67, 212);
             ShowSectionCombo.Name = "ShowSectionCombo";
             ShowSectionCombo.Size = new System.Drawing.Size(220, 21);
             ShowSectionCombo.TabIndex = 173;
@@ -865,7 +939,7 @@
             // label24
             // 
             label24.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            label24.Location = new System.Drawing.Point(-1, 303);
+            label24.Location = new System.Drawing.Point(-2, 190);
             label24.Name = "label24";
             label24.Size = new System.Drawing.Size(292, 21);
             label24.TabIndex = 171;
@@ -957,7 +1031,7 @@
             // ShowFrameUpDown
             // 
             ShowFrameUpDown.Hexadecimal = true;
-            ShowFrameUpDown.Location = new System.Drawing.Point(244, 348);
+            ShowFrameUpDown.Location = new System.Drawing.Point(243, 235);
             ShowFrameUpDown.Margin = new System.Windows.Forms.Padding(3, 1, 3, 1);
             ShowFrameUpDown.Maximum = new decimal(new int[] { 255, 0, 0, 0 });
             ShowFrameUpDown.Name = "ShowFrameUpDown";
@@ -1004,13 +1078,6 @@
             N_B0.Name = "N_B0";
             N_B0.Size = new System.Drawing.Size(43, 20);
             N_B0.TabIndex = 157;
-            // 
-            // N_L_0_SPLITSTRING_7
-            // 
-            N_L_0_SPLITSTRING_7.Location = new System.Drawing.Point(108, 5);
-            N_L_0_SPLITSTRING_7.Name = "N_L_0_SPLITSTRING_7";
-            N_L_0_SPLITSTRING_7.Size = new System.Drawing.Size(123, 20);
-            N_L_0_SPLITSTRING_7.TabIndex = 155;
             // 
             // numericUpDown26
             // 
@@ -1334,7 +1401,7 @@
             AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
             AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
             AutoSize = true;
-            ClientSize = new System.Drawing.Size(836, 711);
+            ClientSize = new System.Drawing.Size(836, 709);
             Controls.Add(N_AddressListExpandsButton_32766);
             Controls.Add(panel8);
             Controls.Add(panel7);
@@ -1367,7 +1434,10 @@
             ((System.ComponentModel.ISupportInitialize)N_ReadStartAddress).EndInit();
             DragTargetPanel.ResumeLayout(false);
             DragTargetPanel.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)N_W8).EndInit();
+            ((System.ComponentModel.ISupportInitialize)N_B11).EndInit();
+            ((System.ComponentModel.ISupportInitialize)N_B10).EndInit();
+            ((System.ComponentModel.ISupportInitialize)N_B9).EndInit();
+            ((System.ComponentModel.ISupportInitialize)N_B8).EndInit();
             ((System.ComponentModel.ISupportInitialize)X_B_ANIME_PIC2).EndInit();
             ((System.ComponentModel.ISupportInitialize)N_B7).EndInit();
             ((System.ComponentModel.ISupportInitialize)N_B6).EndInit();
@@ -1453,7 +1523,6 @@
         private System.Windows.Forms.NumericUpDown N_B2;
         private System.Windows.Forms.NumericUpDown N_B1;
         private System.Windows.Forms.NumericUpDown N_B0;
-        private FEBuilderGBA.TextBoxEx N_L_0_SPLITSTRING_7;
         private System.Windows.Forms.NumericUpDown numericUpDown26;
         private System.Windows.Forms.Button BattleAnimeExportButton;
         private System.Windows.Forms.Button BattleAnimeImportButton;
@@ -1501,6 +1570,12 @@
         private System.Windows.Forms.CheckBox N_L_08_BIT_02;
         private System.Windows.Forms.CheckBox N_L_08_BIT_04;
         private System.Windows.Forms.CheckBox N_L_08_BIT_08;
-        private System.Windows.Forms.NumericUpDown N_W8;
+        private System.Windows.Forms.NumericUpDown N_B11;
+        private System.Windows.Forms.NumericUpDown N_B10;
+        private System.Windows.Forms.NumericUpDown N_B9;
+        private System.Windows.Forms.NumericUpDown N_B8;
+        private TextBoxEx N_L_0_SPLITSTRING_11;
+        private TextBoxEx N_L_0_SPLITSTRING_7;
+        private System.Windows.Forms.Button banimExtendImportButton;
     }
 }

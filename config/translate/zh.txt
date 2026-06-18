@@ -24623,3 +24623,24 @@ A: 不使用 TSA 的背景 224 色(对话用)
 
 :Failed to open decomp project:
 打开反编译工程失败:
+
+:Additional Properties JP
+Additional Properties ZH
+
+:TODO banim additional properties tag hover JP.\r\n
+TODO banim additional properties tag hover ZH.\r\n
+
+:Uncompressed palette JP
+Uncompressed palette ZH
+
+:Uncompressed FrameData JP
+Uncompressed FrameData ZH
+
+:Uncompressed OAMData JP
+Uncompressed OAMData ZH
+
+:32 Colours JP
+32 Colours ZH
+
+:Import Battle Animation with additional properties JP
+Import Battle Animation with additional properties ZH

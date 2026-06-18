@@ -5620,6 +5620,7 @@ namespace FEBuilderGBA
             OptionForm.ClearCache();
             PatchUtil.ClearCache();
             ImageUtilMagic.ClearCache();
+            ImageUtilOAM.ClearCache();
             ItemShopForm.ClearCache();
             MapPointerForm.ClearPlistCache();
             MagicSplitUtil.ClearCache();
@@ -12241,6 +12242,11 @@ namespace FEBuilderGBA
             else if (str == "@BATTLEANIME_PALETTE")
             {
                 str = R._("戦闘アニメーションの汎用色のパレットを定義します。\r\n戦闘アニメーションの汎用色パレットは、所属ごとに、自軍、敵、友軍、グレーの4種類があります。\r\n") + ImageUnitPaletteForm.GetExplainPaletteRule();
+            }
+            else if (str == "@BATTLEANIME_ADDITIONALPROPERTIES")
+            {
+                str = R._(
+                "TODO banim additional properties tag hover JP.\r\n");
             }
             else if (str == "@UNIT_LOW_CLASS_PALETTE")
             {

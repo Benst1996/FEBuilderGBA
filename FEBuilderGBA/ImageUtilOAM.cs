@@ -1,9 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Text;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
-using System.Diagnostics;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace FEBuilderGBA
@@ -23,11 +23,24 @@ namespace FEBuilderGBA
 
         public const int SCREEN_TILE_WIDTH_M1 = 240 / 8;
 
-        // Additional banim properties. Not used in vanilla.
+        // Additional banim properties. Not used in vanilla. Used by extendBanim.
         public const uint BA2_AB_UNCOMPPALDATA = 1;
         public const uint BA2_AB_UNCOMPFRAMEDATA = 2;
         public const uint BA2_AB_UNCOMPOAMDATA = 4;
         public const uint BA2_AB_2PALETTES = 8;
+
+        // extendBanim patch identification.
+        private const uint extendBanimAddress = 0x54DE2;
+        private const uint extendBanimLength = 10;
+        private static readonly IReadOnlyList<byte> extendBanimValue = new byte[] { 0x64, 0x48, 0x17, 0x21, 0x02, 0x22, 0x1C, 0xF0, 0x3E, 0xFB };
+        private static ExtendBanimActiveCache extendBanimActiveCache;
+
+        public enum ExtendBanimActiveCache
+        {
+            NO = 0
+           , YES = 1
+           , NoCache = 0xFF
+        };
 
         // Direction banim faces (rtl vs ltr OAM).
         public const uint BANIM_FACELEFT = 0;
@@ -47,6 +60,54 @@ namespace FEBuilderGBA
 
         const int bitmap_spell_addx = 0xAC;
 
+        // Checking for active extendBanim will be cached.
+        public static void ClearCache()
+        {
+            extendBanimActiveCache = ExtendBanimActiveCache.NoCache;
+        }
+
+        // Returns true if banimExtend patch is active. Returns false otherwise.
+        public static bool IsBanimExtendActive()
+        {
+            // If cached, we can return immediately.
+            if (extendBanimActiveCache == ExtendBanimActiveCache.NO)
+            {
+                return false;
+            }
+            else if (extendBanimActiveCache == ExtendBanimActiveCache.YES)
+            {
+                return true;
+            }
+
+            // Default cache to NO.
+            extendBanimActiveCache = ExtendBanimActiveCache.NO;
+
+            // Supported FEGBA ROMs.
+            string[] supportedVersions = { "FE8U" };
+
+            // If rom can't be read, return false.
+            if (Program.ROM == null || Program.ROM.RomInfo == null || Program.ROM.Data == null)
+            {
+                return false;
+            }
+
+            // Only check supported versions of FEGBA ROMs.
+            string version = Program.ROM.RomInfo.VersionToFilename;
+            if (!supportedVersions.Contains(version))
+            {
+                return false;
+            }
+
+            // Compare data in ROM to confirm whether extendBanim is applied or not.
+            byte[] romData = Program.ROM.getBinaryData(extendBanimAddress, extendBanimLength);
+            if (U.memcmp((byte[])extendBanimValue, romData) == 0)
+            {
+                extendBanimActiveCache = ExtendBanimActiveCache.YES;
+                return true;
+            }
+
+            return false;
+        }
 
         public static Bitmap DrawBattleAnime(uint showSectionData, uint showFrameData, uint sectionData, uint frameData, uint faceDirection, uint rightToLeftOAM, uint leftToRightOAM, uint palettes, uint additionalProperties)
         {

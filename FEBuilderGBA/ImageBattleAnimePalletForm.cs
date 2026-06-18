@@ -61,12 +61,17 @@ namespace FEBuilderGBA
 
         private void PaletteWriteButton_Click(object sender, EventArgs e)
         {
-            uint newAddr = PFR.MakePaletteUIToROM((uint)PALETTE_ADDRESS.Value, true, this.PaletteIndexComboBox.SelectedIndex );
+            uint newAddr = PFR.MakePaletteUIToROM((uint)PALETTE_ADDRESS.Value, this.IsCompressed, this.PaletteIndexComboBox.SelectedIndex );
             if (newAddr == U.NOT_FOUND)
             {
                 return;
             }
-            PALETTE_ADDRESS.Value = U.toPointer(newAddr);
+
+            if (this.IsCompressed)
+            {
+                PALETTE_ADDRESS.Value = U.toPointer(newAddr);
+            }
+
             InputFormRef.WriteButtonToYellow(this.PaletteWriteButton, false);
             InputFormRef.ShowWriteNotifyAnimation(this, newAddr);
         }

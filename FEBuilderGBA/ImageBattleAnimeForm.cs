@@ -16,6 +16,8 @@ namespace FEBuilderGBA
         {
             InitializeComponent();
 
+            applyBanimExtendControls();
+
             MakeComboBattleAnimeSP(L_1_BATTLEANIMESP_0);
 
             InputFormRef.markupJumpLabel(LinkInternt);
@@ -24,22 +26,22 @@ namespace FEBuilderGBA
             U.SelectedIndexSafety(ShowSectionCombo, 0);
             U.SelectedIndexSafety(ShowDirectionComboBox, 0);
             U.SelectedIndexSafety(ShowZoomComboBox, 0);
-            U.SelectedIndexSafety(ShowPaletteComboBox,0);
+            U.SelectedIndexSafety(ShowPaletteComboBox, 0);
 
-//            X_LZ77_INFO.ForeColor = OptionForm.Color_InputDecimal_ForeColor();
-//            X_LZ77_INFO.BackColor = OptionForm.Color_InputDecimal_BackColor();
+            //            X_LZ77_INFO.ForeColor = OptionForm.Color_InputDecimal_ForeColor();
+            //            X_LZ77_INFO.BackColor = OptionForm.Color_InputDecimal_BackColor();
 
             this.CLASS_LISTBOX.OwnerDraw(ListBoxEx.DrawClassAndText, DrawMode.OwnerDrawFixed);
             this.CLASS_LISTBOX.ItemListToJumpForm("CLASS");
-            U.ConvertListBox(ClassForm.MakeClassList(), ref  this.CLASS_LISTBOX);
+            U.ConvertListBox(ClassForm.MakeClassList(), ref this.CLASS_LISTBOX);
 
 
             this.AddressList.OwnerDraw(ListBoxEx.DrawImageSPTypeAndText, DrawMode.OwnerDrawFixed);
             this.N_AddressList.OwnerDraw(ListBoxEx.DrawImageBattleAndText, DrawMode.OwnerDrawFixed);
-            
+
             this.InputFormRef = Init(this);
             this.N_InputFormRef = N_Init(this);
-                
+
             this.InputFormRef.MakeGeneralAddressListContextMenu(true);
             this.N_InputFormRef.MakeGeneralAddressListContextMenu(true);
 
@@ -58,10 +60,81 @@ namespace FEBuilderGBA
             {
                 using (ImageFormRef.AutoDrag ad = new ImageFormRef.AutoDrag(filename))
                 {
-                    this.BattleAnimeImportButton_Click(null,null);
+                    this.BattleAnimeImportButton_Click(null, null);
                 }
             });
         }
+
+        public uint getAdditionalProperties()
+        {
+            uint additionalProperties = 0;
+            if (ImageUtilOAM.IsBanimExtendActive())
+            {
+                additionalProperties = (uint)N_B8.Value;       // Uncompressed palette, FrameData, OAMData, etc.
+            }
+
+            return additionalProperties;
+        }
+
+        // Loads in & adjusts controls for banimExtend/Additional properties.
+        private void applyBanimExtendControls()
+        {
+            if (ImageUtilOAM.IsBanimExtendActive())
+            {
+                N_L_0_SPLITSTRING_11.Visible = false;
+                N_L_0_SPLITSTRING_11.Enabled = false;
+                N_L_0_SPLITSTRING_7.Visible = true;
+                N_L_0_SPLITSTRING_7.Enabled = true;
+                N_B8.Left = 199;
+                N_B8.Top = 368;
+                N_B8.ReadOnly = true;
+                N_B9.Visible = false;
+                N_B10.Visible = false;
+                N_B11.Visible = false;
+
+                additionalProperties.Visible = true;
+                N_L_08_BIT_01.Visible = true;
+                N_L_08_BIT_01.Enabled = true;
+                N_L_08_BIT_02.Visible = true;
+                N_L_08_BIT_02.Enabled = true;
+                N_L_08_BIT_04.Visible = true;
+                N_L_08_BIT_04.Enabled = true;
+                N_L_08_BIT_08.Visible = true;
+                N_L_08_BIT_08.Enabled = true;
+
+                banimExtendImportButton.Visible = true;
+                banimExtendImportButton.Enabled = true;
+            }
+            else
+            {
+                N_L_0_SPLITSTRING_11.Visible = true;
+                N_L_0_SPLITSTRING_11.Enabled = true;
+                N_L_0_SPLITSTRING_7.Visible = false;
+                N_L_0_SPLITSTRING_7.Enabled = false;
+                N_B8.Left = 108;
+                N_B8.Top = 67;
+                N_B8.ReadOnly = false;
+                N_B9.Visible = true;
+                N_B10.Visible = true;
+                N_B11.Visible = true;
+
+                additionalProperties.Visible = false;
+                N_L_08_BIT_01.Visible = false;
+                N_L_08_BIT_01.Enabled = false;
+                N_L_08_BIT_02.Visible = false;
+                N_L_08_BIT_02.Enabled = false;
+                N_L_08_BIT_04.Visible = false;
+                N_L_08_BIT_04.Enabled = false;
+                N_L_08_BIT_08.Visible = false;
+                N_L_08_BIT_08.Enabled = false;
+
+                banimExtendImportButton.Visible = false;
+                banimExtendImportButton.Enabled = false;
+            }
+
+            U.SetIcon(banimExtendImportButton, Properties.Resources.icon_upload);
+        }
+
         void PostWriteHandler(object sender, EventArgs e)
         {
             if (B0.Value == 0x28 && B1.Value == 0x0)
@@ -123,8 +196,16 @@ namespace FEBuilderGBA
                 }
                 , (int i, uint addr) =>
                 {
-                    String animename = Program.ROM.getString(addr, 8);
-                    return U.ToHexString(i+1) + U.SA(animename) + InputFormRef.GetCommentSA(addr);
+                    String animename;
+                    if (ImageUtilOAM.IsBanimExtendActive())
+                    {
+                        animename = Program.ROM.getString(addr, 8);
+                    }
+                    else
+                    {
+                        animename = Program.ROM.getString(addr, 12);
+                    }
+                    return U.ToHexString(i + 1) + U.SA(animename) + InputFormRef.GetCommentSA(addr);
                 }
                 );
         }
@@ -150,7 +231,7 @@ namespace FEBuilderGBA
         }
         private void ShowSectionUpDown_ValueChanged(object sender, EventArgs e)
         {
-            N_AddressList_SelectedIndexChanged(null,null);
+            N_AddressList_SelectedIndexChanged(null, null);
         }
 
 
@@ -178,7 +259,7 @@ namespace FEBuilderGBA
             string error = "";
             string text = "Un-LZ77 ";
             uint frame = U.toOffset(N_P16.Value);
-            uint oam   = U.toOffset(N_P20.Value);
+            uint oam = U.toOffset(N_P20.Value);
             if (U.isSafetyOffset(frame))
             {
                 uint size = LZ77.getUncompressSize(Program.ROM.Data, frame);
@@ -223,13 +304,26 @@ namespace FEBuilderGBA
             uint showFrameData = (uint)ShowFrameUpDown.Value;
             int paletteIndex = (int)ShowPaletteComboBox.SelectedIndex;
 
-            uint additionalProperties = (uint)N_W8.Value;       // Uncompressed palette, FrameData, OAMData, etc.
+            uint additionalProperties = getAdditionalProperties();
             uint faceDirection = ImageUtilOAM.BANIM_FACELEFT;
             uint sectionData = (uint)N_P12.Value;
             uint frameData = (uint)N_P16.Value;
             uint rightToLeftOAM = (uint)N_P20.Value;
             uint leftToRightOAM = (uint)N_P24.Value;
             uint palettes = (uint)N_P28.Value;
+
+            // Disallow exporting or editing banim if additional properties are set.
+            // These options are unsupported for these banims.
+            if (additionalProperties != 0)
+            {
+                BattleAnimeExportButton.Visible = false;
+                X_N_JumpEditor.Visible = false;
+            }
+            else
+            {
+                BattleAnimeExportButton.Visible = true;
+                X_N_JumpEditor.Visible = true;
+            }
 
             if (ShowDirectionComboBox.SelectedIndex == 1)
             {//敵軍の位置を表示
@@ -270,10 +364,10 @@ namespace FEBuilderGBA
 
         public enum ScaleTrim
         {
-             NO
-            ,SCALE_90
-            ,SCALE_48
-            ,NO_BUT_FLIP
+            NO
+            , SCALE_90
+            , SCALE_48
+            , NO_BUT_FLIP
         };
 
         public static Bitmap DrawBattleAnime(uint id, ScaleTrim trim = ScaleTrim.SCALE_90, uint custompalette = 0, uint showSectionData = 0, uint showFrameData = 0, int showPaletteIndex = 0)
@@ -291,12 +385,17 @@ namespace FEBuilderGBA
                 return ImageUtil.BlankDummy();
             }
 
-            uint additionalProperties = Program.ROM.u32(addr+8);        // Uncompressed palette, FrameData, OAMData, etc.
-            uint sectionData = Program.ROM.u32(addr+12);
-            uint frameData = Program.ROM.u32(addr+16);
-            uint rightToLeftOAM = Program.ROM.u32(addr+20);
-            uint leftToRightOAM = Program.ROM.u32(addr+24);
-            uint palettes = Program.ROM.u32(addr+28);
+            uint additionalProperties = 0;
+            if (ImageUtilOAM.IsBanimExtendActive())
+            {
+                additionalProperties = Program.ROM.u32(addr + 8);        // Uncompressed palette, FrameData, OAMData, etc.
+            }
+
+            uint sectionData = Program.ROM.u32(addr + 12);
+            uint frameData = Program.ROM.u32(addr + 16);
+            uint rightToLeftOAM = Program.ROM.u32(addr + 20);
+            uint leftToRightOAM = Program.ROM.u32(addr + 24);
+            uint palettes = Program.ROM.u32(addr + 28);
             if (custompalette > 0)
             {
                 uint p = ImageUnitPaletteForm.GetPaletteAddr(custompalette);
@@ -312,7 +411,7 @@ namespace FEBuilderGBA
             {
                 if ((additionalProperties & ImageUtilOAM.BA2_AB_2PALETTES) != 0)
                 {
-                    bitmap = ImageUtil.SwapPalette(bitmap, showPaletteIndex*2, 32);
+                    bitmap = ImageUtil.SwapPalette(bitmap, showPaletteIndex * 2, 32);
                 }
                 else
                 {
@@ -320,7 +419,7 @@ namespace FEBuilderGBA
                 }
             }
 
-            
+
             if (trim == ScaleTrim.SCALE_48)
             {
                 Bitmap trimBitmap = ImageUtil.Blank(48, 48, bitmap);
@@ -348,7 +447,7 @@ namespace FEBuilderGBA
                 return bitmap;
             }
 
-            
+
         }
 
         //クラスのアニメを取得します。 とりあえず一番最初の奴を.
@@ -445,7 +544,7 @@ namespace FEBuilderGBA
 
         public static string getSPTypeName(uint b0, uint b1)
         {
-            if (b1==0)
+            if (b1 == 0)
             {//アイテム指定 b0はアイテム名
                 return ItemForm.GetItemName(b0);
             }
@@ -576,44 +675,44 @@ namespace FEBuilderGBA
             Program.Undo.Push(undodata);
         }
 
-       public static string GetBattleAnimeHint(uint search_animeindex)
-       {
-           List<AddrResult> classlist = ClassForm.MakeClassList();
-           for (int cid = 0; cid < classlist.Count; cid++)
-           {
-               uint addr = ClassForm.GetBattleAnimeAddrWhereID((uint)cid);
-               if (!U.isSafetyOffset(addr))
-               {
-                   continue;
-               }
-               for (uint i = 0; true; i += 4)
-               {
-                   uint a = addr + i;
-                   if ( ! U.isSafetyOffset(a + 3))
-                   {
-                       break;
-                   }
+        public static string GetBattleAnimeHint(uint search_animeindex)
+        {
+            List<AddrResult> classlist = ClassForm.MakeClassList();
+            for (int cid = 0; cid < classlist.Count; cid++)
+            {
+                uint addr = ClassForm.GetBattleAnimeAddrWhereID((uint)cid);
+                if (!U.isSafetyOffset(addr))
+                {
+                    continue;
+                }
+                for (uint i = 0; true; i += 4)
+                {
+                    uint a = addr + i;
+                    if (!U.isSafetyOffset(a + 3))
+                    {
+                        break;
+                    }
 
-                   uint item = Program.ROM.u8(a + 0 );
-                   uint sp = Program.ROM.u8(a + 1);
-                   uint anime = Program.ROM.u16(a + 2);
-                   if (item == 0 && sp == 0 && anime == 0)
-                   {
-                       break;
-                   }
-                   if (anime != search_animeindex)
-                   {
-                       continue;
-                   }
-                   //発見!
-                   string name = U.skip(classlist[cid].name," ").Trim();
-                   return name + " " + getSPTypeName(item, sp); 
-               }
-           }
+                    uint item = Program.ROM.u8(a + 0);
+                    uint sp = Program.ROM.u8(a + 1);
+                    uint anime = Program.ROM.u16(a + 2);
+                    if (item == 0 && sp == 0 && anime == 0)
+                    {
+                        break;
+                    }
+                    if (anime != search_animeindex)
+                    {
+                        continue;
+                    }
+                    //発見!
+                    string name = U.skip(classlist[cid].name, " ").Trim();
+                    return name + " " + getSPTypeName(item, sp);
+                }
+            }
 
-           //ない
-           return "";
-       }
+            //ない
+            return "";
+        }
 
         private void BattleAnimeExportButton_Click(object sender, EventArgs e)
         {
@@ -623,21 +722,21 @@ namespace FEBuilderGBA
                 return;
             }
 
-            // Can't export banims with additional properties set.
-            uint additionalProperties = (uint)N_W8.Value;        // Uncompressed palette, FrameData, OAMData, etc.
-            if (additionalProperties != 0)
-            {
-                R.ShowStopError("This banim has additional properties set and can therefore not be exported.");
-                return;
-            }
-
             string title = R._("保存するファイル名を選択してください");
             string filter = R._("FEditorシリアライズ形式|*.bin|バトルアニメ コメントあり|*.txt|バトルアニメ コメントなし|*.txt|アニメGIF|*.gif|Dump All|*.bin|All files|*");
-           
+
             SaveFileDialog save = new SaveFileDialog();
             save.Title = title;
             save.Filter = filter;
-            Program.LastSelectedFilename.Load(this, "", save,N_L_0_SPLITSTRING_7.Text);
+
+            if (ImageUtilOAM.IsBanimExtendActive())
+            {
+                Program.LastSelectedFilename.Load(this, "", save, N_L_0_SPLITSTRING_7.Text);
+            }
+            else
+            {
+                Program.LastSelectedFilename.Load(this, "", save, N_L_0_SPLITSTRING_11.Text);
+            }
 
             DialogResult dr = save.ShowDialog();
             if (dr != DialogResult.OK)
@@ -657,10 +756,10 @@ namespace FEBuilderGBA
             uint leftToRightOAM = (uint)N_P24.Value;
             uint palettes = (uint)N_P28.Value;
 
-            string filehint = GetBattleAnimeHint((uint)N_AddressList.SelectedIndex+1);
+            string filehint = GetBattleAnimeHint((uint)N_AddressList.SelectedIndex + 1);
             if (filehint == "")
             {//不明な場合、 FE7にある個別バトルにも問い合わせる
-                filehint = UnitCustomBattleAnimeForm.GetBattleAnimeHint((uint)N_AddressList.SelectedIndex+1);
+                filehint = UnitCustomBattleAnimeForm.GetBattleAnimeHint((uint)N_AddressList.SelectedIndex + 1);
             }
             filehint = N_AddressList.Text + " " + filehint;
             int palette_count = ImageUtilOAM.CalcMaxPaletteCount(sectionData, frameData, rightToLeftOAM, palettes);
@@ -684,7 +783,7 @@ namespace FEBuilderGBA
                     bool enableComment = false;
                     ImageUtilOAM.ExportBattleAnime(filehint, enableComment, name
                         , sectionData, frameData, rightToLeftOAM, palettes, palette_count);
-                    string without_comment_name = U.ChangeExtFilename(filename, ".txt" , "_without_comment");
+                    string without_comment_name = U.ChangeExtFilename(filename, ".txt", "_without_comment");
                     U.Move(name, without_comment_name);
                 }
                 {
@@ -767,7 +866,7 @@ namespace FEBuilderGBA
             }
         }
 
-        public string BattleAnimeImportDirect(uint id,string filename)
+        public string BattleAnimeImportDirect(uint id, string filename)
         {
             if (InputFormRef.IsPleaseWaitDialog(this))
             {//2重割り込み禁止
@@ -776,7 +875,7 @@ namespace FEBuilderGBA
 
             if (id <= 0)
             {
-                return R._("指定されたID({0})は存在しません。", U.To0xHexString(id)) ;
+                return R._("指定されたID({0})は存在しません。", U.To0xHexString(id));
             }
 
             uint battleanime_baseaddress = N_InputFormRef.IDToAddr(id - 1);
@@ -810,7 +909,7 @@ namespace FEBuilderGBA
                 }
                 else
                 {
-                    return R._("未対応の拡張子({0})が指定されました。",ext);
+                    return R._("未対応の拡張子({0})が指定されました。", ext);
                 }
             }
 
@@ -839,24 +938,16 @@ namespace FEBuilderGBA
             }
 
             uint battleanime_baseaddress = InputFormRef.SelectToAddr(N_AddressList);
-            if(battleanime_baseaddress == U.NOT_FOUND)
+            if (battleanime_baseaddress == U.NOT_FOUND)
             {
-                return ;
+                return;
             }
-
-            uint additionalProperties = (uint)N_W8.Value;        // Uncompressed palette, FrameData, OAMData, etc.
+            uint additionalProperties = getAdditionalProperties();
             uint sectionData = (uint)N_P12.Value;
             uint frameData = (uint)N_P16.Value;
             uint rightToLeftOAM = (uint)N_P20.Value;
             uint leftToRightOAM = (uint)N_P24.Value;
             uint palettes = (uint)N_P28.Value;
-           
-            // Can't edit banims with additional properties set.
-            if (additionalProperties != 0)
-            {
-                R.ShowStopError("This banim has additional properties set and can therefore not be edited.");
-                return;
-            }
 
             uint ID = (uint)N_AddressList.SelectedIndex + 1;
 
@@ -884,7 +975,7 @@ namespace FEBuilderGBA
                 byte[] paletteBIN = LZ77.decompress(Program.ROM.Data, U.toOffset(palettes));
 
                 ToolAnimationCreatorForm f = (ToolAnimationCreatorForm)InputFormRef.JumpFormLow<ToolAnimationCreatorForm>();
-                f.Init( ToolAnimationCreatorUserControl.AnimationTypeEnum.BattleAnime
+                f.Init(ToolAnimationCreatorUserControl.AnimationTypeEnum.BattleAnime
                     , ID, filehint, filename, paletteBIN);
                 f.Show();
                 f.Focus();
@@ -903,14 +994,14 @@ namespace FEBuilderGBA
             }
         }
 
-    //       public static uint CalcBattleAnimeSettingDataLength(uint addr)
-    //       {
-    //           InputFormRef InputFormRef = Init(null);
-    //          InputFormRef.ReInit(addr);
-    //           return InputFormRef.DataCount * InputFormRef.BlockSize;
-    //       }
+        //       public static uint CalcBattleAnimeSettingDataLength(uint addr)
+        //       {
+        //           InputFormRef InputFormRef = Init(null);
+        //          InputFormRef.ReInit(addr);
+        //           return InputFormRef.DataCount * InputFormRef.BlockSize;
+        //       }
 
-        public static void MakeBattleAnimeSettingDataLength(List<Address> list, uint battleAnimeSettingPointer,string selfname)
+        public static void MakeBattleAnimeSettingDataLength(List<Address> list, uint battleAnimeSettingPointer, string selfname)
         {
             InputFormRef InputFormRef = Init(null);
             InputFormRef.ReInitPointer(battleAnimeSettingPointer);
@@ -920,14 +1011,14 @@ namespace FEBuilderGBA
         }
 
         //誤爆すると面倒なことになるフレームとOAMのデータ群
-        public static void MakeBattleFrameAndOAMDictionary(Dictionary<uint,bool> dic)
+        public static void MakeBattleFrameAndOAMDictionary(Dictionary<uint, bool> dic)
         {
             InputFormRef N_InputFormRef = N_Init(null);
 
             uint addr = N_InputFormRef.BaseAddress;
             for (uint i = 0; i < N_InputFormRef.DataCount; i++, addr += N_InputFormRef.BlockSize)
             {
-                dic[ Program.ROM.p32(addr + 12) ] = true; //Section
+                dic[Program.ROM.p32(addr + 12)] = true; //Section
                 dic[Program.ROM.p32(addr + 16)] = true; //frame
                 dic[Program.ROM.p32(addr + 20)] = true; //OAM1
                 dic[Program.ROM.p32(addr + 24)] = true; //OAM2
@@ -935,9 +1026,9 @@ namespace FEBuilderGBA
             }
         }
         //全データの取得
-        public static void MakeAllDataLength(List<Address> list, bool isPointerOnly )
+        public static void MakeAllDataLength(List<Address> list, bool isPointerOnly)
         {
-            string selfname ;
+            string selfname;
             InputFormRef InputFormRef = Init(null);
 
             uint addr;
@@ -954,13 +1045,13 @@ namespace FEBuilderGBA
                 InputFormRef.ReInitPointer(pointer);
 
                 selfname = "BattleAnimeSeting:" + U.To0xHexString(cid);
-                FEBuilderGBA.AddressWinForms.AddAddress(list,InputFormRef
+                FEBuilderGBA.AddressWinForms.AddAddress(list, InputFormRef
                     , selfname, new uint[] { });
             }
 
             selfname = "BattleAnime";
             InputFormRef N_InputFormRef = N_Init(null);
-            FEBuilderGBA.AddressWinForms.AddAddress(list, N_InputFormRef, selfname, new uint[] {12,16,20,24,28 });
+            FEBuilderGBA.AddressWinForms.AddAddress(list, N_InputFormRef, selfname, new uint[] { 12, 16, 20, 24, 28 });
 
             //戦闘アニメーションはlz77圧縮の中にポインタがある特殊形式です
             addr = N_InputFormRef.BaseAddress;
@@ -1033,7 +1124,7 @@ namespace FEBuilderGBA
         private void X_N_JumpPalette_Click(object sender, EventArgs e)
         {
 
-            uint additionalProperties = (uint)N_W8.Value;        // Uncompressed palette, FrameData, OAMData, etc.
+            uint additionalProperties = getAdditionalProperties();
             bool IsCompressed = true;
 
             // Distinguish between compressed and uncompressed palettes.
@@ -1115,7 +1206,7 @@ namespace FEBuilderGBA
 
             if (axsUser == false)
             {//問題なし
-                return ;
+                return;
             }
             if (PatchUtil.SearchCache_HandAxsWildCard() == PatchUtil.HandAxsWildCard_extends.Enable)
             {
@@ -1176,11 +1267,11 @@ namespace FEBuilderGBA
         public static void MakeCheckError(List<FELint.ErrorSt> errors)
         {
             InputFormRef N_InputFormRef = N_Init(null);
-            
+
             bool isFE6 = (Program.ROM.RomInfo.version == 6);
             if (!isFE6)
             {//FE6の場合、パラディンなどが手斧モーションを持っていない.
-            //そのため、FE7,FE8だけチェックします.
+             //そのため、FE7,FE8だけチェックします.
                 InputFormRef InputFormRef = Init(null);
 
                 List<AddrResult> handAxsItems = ItemForm.MakeItemListByHandAxs();
@@ -1198,7 +1289,7 @@ namespace FEBuilderGBA
                     {
                         errors.Add(new FELint.ErrorSt(FELint.Type.CLASS, class_addr
                             , R._("クラス({0})の{1}のポインタ({2})が危険です。"
-                            , classList[(int)cid].name ,R._("戦闘アニメ"), U.To0xHexString(addr)), cid));
+                            , classList[(int)cid].name, R._("戦闘アニメ"), U.To0xHexString(addr)), cid));
                         continue;
                     }
 
@@ -1339,7 +1430,7 @@ namespace FEBuilderGBA
                 List<byte> rightToLeftOAMArray = new List<byte>(rightToLeftOAMBin);
                 List<byte> leftToRightOAMArray = new List<byte>(leftToRightOAMBin);
 
-                if (! ImageUtilOAM.IsMatchOAM(rightToLeftOAMArray, leftToRightOAMArray))
+                if (!ImageUtilOAM.IsMatchOAM(rightToLeftOAMArray, leftToRightOAMArray))
                 {//鏡写しではないので、自動生成できません。
                     continue;
                 }
@@ -1415,6 +1506,55 @@ namespace FEBuilderGBA
             {
                 R.ShowStopError("ソースファイルが記録されません");
             }
+        }
+
+        private void banimExtendImportButton_Click(object sender, EventArgs e)
+        {
+            if (InputFormRef.IsPleaseWaitDialog(this))
+            {//2重割り込み禁止
+                return;
+            }
+
+            string filename;
+            if (ImageFormRef.GetDragFilePath(out filename))
+            {
+            }
+            else
+            {
+                string title = R._("開くファイル名を選択してください");
+                string filter = R._("AAA Script JP|*.txt");
+
+                OpenFileDialog open = new OpenFileDialog();
+                open.Title = title;
+                open.Filter = filter;
+                Program.LastSelectedFilename.Load(this, "", open);
+                DialogResult dr = open.ShowDialog();
+                if (dr != DialogResult.OK)
+                {
+                    return;
+                }
+                if (!U.CanReadFileRetry(open))
+                {
+                    return;
+                }
+                Program.LastSelectedFilename.Save(this, "", open);
+                filename = open.FileNames[0];
+            }
+
+            //インポート実行
+            uint id = (uint)N_AddressList.SelectedIndex + 1;
+
+            // TODO
+
+            /*
+            string error = BattleAnimeImportDirect(id, filename);
+            if (error != "")
+            {
+                R.ShowStopError(error);
+                InputFormRef.IfAdditionalErrorMessagesForIdiotsWhoDontKnowHowToUnzipTheZip(filename);
+                return;
+            }
+            */
         }
     }
 }
