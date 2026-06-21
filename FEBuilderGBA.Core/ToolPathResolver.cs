@@ -86,6 +86,15 @@ namespace FEBuilderGBA
             return null;
         }
 
+        // Resolve AAA executable user-configured path.
+        public static string ResolveAAA()
+        {
+            string configured = CoreState.Config?.at("AAA", "");
+            if (!string.IsNullOrEmpty(configured) && File.Exists(configured))
+                return configured;
+            return null;
+        }
+
         /// <summary>
         /// Get directories to search for bundled tools: app base dir + repo root.
         /// </summary>

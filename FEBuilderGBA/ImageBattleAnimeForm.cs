@@ -7,6 +7,8 @@ using System.Drawing;
 using System.IO;
 using System.Text;
 using System.Windows.Forms;
+using SharpCompress.Common;
+using static FEBuilderGBA.ImageUtilOAM.DrawOAM;
 
 namespace FEBuilderGBA
 {
@@ -1515,6 +1517,14 @@ namespace FEBuilderGBA
                 return;
             }
 
+            // Find path to AAA executable.
+            string pathToAAA = ToolPathResolver.ResolveAAA();
+            if (pathToAAA == null)
+            {
+                R.ShowStopError("TODO AAA.exe is not setup JP.");
+                return;
+            }
+
             string filename;
             if (ImageFormRef.GetDragFilePath(out filename))
             {
@@ -1541,20 +1551,86 @@ namespace FEBuilderGBA
                 filename = open.FileNames[0];
             }
 
-            //インポート実行
-            uint id = (uint)N_AddressList.SelectedIndex + 1;
+            // Execute AAA to create an installer event file for the animation.
+            string battleAnimEntryAddress = "0x" + Decimal.ToInt32(N_Address.Value).ToString("X");
+            string outputPath = Path.GetDirectoryName(filename);
+            string output = MainFormUtil.ProgramRunAsAndEndWait(pathToAAA, "-a " + battleAnimEntryAddress + " \"" + filename + "\"", outputPath);
 
-            // TODO
-
-            /*
-            string error = BattleAnimeImportDirect(id, filename);
-            if (error != "")
+            // Find installer event file name.
+            string[] outputLines = output.Split('\n');
+            int i = 0;
+            string installerName = "";
+            while (i < outputLines.Length)
             {
-                R.ShowStopError(error);
-                InputFormRef.IfAdditionalErrorMessagesForIdiotsWhoDontKnowHowToUnzipTheZip(filename);
+                string sanitized = outputLines[i].TrimEnd('\r', '\n');
+                if (sanitized == "Installer file:")
+                {
+                    installerName = outputLines[i + 1].TrimEnd('\r', '\n');
+                    break;
+                }
+                i++;
+            }
+            if (installerName == "")
+            {
+                // TODO handle AAA error!
+            }
+            string installerPath = Path.Combine(outputPath, installerName);
+
+            // Create empty rom.
+            string tempRomName = "_FBG_Temp_" + DateTime.Now.Ticks.ToString() + ".gba";
+            string tempRomPath = Path.Combine(outputPath, tempRomName);
+            const int tempRomFreeSpace = 0x1000000;
+            File.CreateText(tempRomPath).Close();
+
+            // Apply banim patch to empty ROM.
+            Undo.UndoData undodata = Program.Undo.NewUndoData(this);
+            SymbolUtil.DebugSymbol storeSymbol = SymbolUtil.DebugSymbol.SaveComment;
+
+            string symbol;
+            bool r;
+            try
+            {
+                r = MainFormUtil.CompilerEventAssembler(tempRomPath, installerPath, tempRomFreeSpace, U.NOT_FOUND, U.NOT_FOUND, out output, out symbol);
+            }
+            catch (Win32Exception err)
+            {
+                r = false;
+                symbol = "";
+                output = R._("プロセスを実行できません。\r\nfilename:{0}\r\n{1}", installerPath, err.ToString());
+            }
+            if (!r)
+            {
+                throw new PatchForm.PatchException(output);
+            }
+
+            // Calculate size of patch when applied to ROM.
+            FileInfo f = new FileInfo(tempRomPath);
+            uint patchSize = (uint)((int)f.Length - tempRomFreeSpace);
+
+            // TODO, handle error if patchSize is < 0 or > 0x100 0000.
+
+            // Determine free area required based on this size.
+            uint freearea = InputFormRef.AllocBinaryData(patchSize, isProgramArea: false);
+
+            // Apply patch to ROM and track undoData.
+            try
+            {
+                EventAssemblerForm.WriteEA(installerPath, freearea, U.NOT_FOUND, U.NOT_FOUND, undodata, storeSymbol);
+            }
+            catch (PatchForm.PatchException exception)
+            {
+                Program.Undo.Rollback(undodata);
+
+                R.ShowStopError(exception.Message);
                 return;
             }
-            */
+            Program.Undo.Push(undodata);
+
+            //選択しているところを再選択して画面を再描画
+            U.ReSelectList(N_AddressList);
+
+            //書き込み通知
+            InputFormRef.ShowWriteNotifyAnimation(this, Convert.ToUInt32(battleAnimEntryAddress, 16));
         }
     }
 }

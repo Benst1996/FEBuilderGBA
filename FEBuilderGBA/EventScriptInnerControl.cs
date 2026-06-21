@@ -3440,7 +3440,7 @@ namespace FEBuilderGBA
             bool r;
             try
             {
-                r = MainFormUtil.CompilerEventAssembler(filename, 0, U.NOT_FOUND, U.NOT_FOUND, out errorOutput, out symbolOutput);
+                r = MainFormUtil.CompilerEventAssembler("", filename, 0, U.NOT_FOUND, U.NOT_FOUND, out errorOutput, out symbolOutput);
             }
             catch (Win32Exception e)
             {

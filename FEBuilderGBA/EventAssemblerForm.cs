@@ -173,7 +173,7 @@ namespace FEBuilderGBA
             bool r;
             try
             {
-                r = MainFormUtil.CompilerEventAssembler(EA, freearea,org_sp,org_data, out output, out symbol);
+                r = MainFormUtil.CompilerEventAssembler("", EA, freearea,org_sp,org_data, out output, out symbol);
             }
             catch (Win32Exception e)
             {

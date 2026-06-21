@@ -1144,7 +1144,7 @@ namespace FEBuilderGBA
 
 
         //EventAssemblerで対象物をコンパイル
-        public static bool CompilerEventAssembler(string target_filename, uint freearea,uint org_sp,uint org_data, out string output, out string out_symbol)
+        public static bool CompilerEventAssembler(string rom_path, string target_filename, uint freearea,uint org_sp,uint org_data, out string output, out string out_symbol)
         {
             output = "";
             out_symbol = "";
@@ -1177,14 +1177,21 @@ namespace FEBuilderGBA
             string output_symFile = Path.GetTempFileName();
 
             string output_target_rom;
-            try
+            if (rom_path != "")
             {
-                output_target_rom = U.WriteTempROM("event_assembler");
+                output_target_rom = rom_path;
             }
-            catch (Exception e)
+            else
             {
-                output = R._("ファイルに書き込めませんでした。\r\nファイルが他アプリケーションで利用中の可能性があります。\r\n{0}",e.ToString());
-                return false;
+                try
+                {
+                    output_target_rom = U.WriteTempROM("event_assembler");
+                }
+                catch (Exception e)
+                {
+                    output = R._("ファイルに書き込めませんでした。\r\nファイルが他アプリケーションで利用中の可能性があります。\r\n{0}", e.ToString());
+                    return false;
+                }
             }
 
             string tooldir = Path.GetDirectoryName(compiler_exe);

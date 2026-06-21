@@ -63,6 +63,7 @@ namespace FEBuilderGBA
             python3.Text = GetPython3();
             srccode_texteditor.Text = GetSrccodeTexteditor();
             srccode_directory.Text = GetSrccodeDirectory();
+            AAA.Text = Program.Config.at("AAA");
 
             // Submodule remote URLs
             LoadSubmoduleUrls();
@@ -260,6 +261,7 @@ namespace FEBuilderGBA
             Program.Config["srccode_texteditor"] = srccode_texteditor.Text;
             Program.Config["srccode_directory"] = srccode_directory.Text;
             Program.Config["git_path"] = git_path_textbox.Text;
+            Program.Config["AAA"] = AAA.Text;
 
             // Save submodule remote URLs
             SaveSubmoduleUrls();
@@ -2042,6 +2044,20 @@ namespace FEBuilderGBA
                 GitUtil.SetSubmoduleRemote(System.IO.Path.Combine(repoRoot, "resources", "FE-Repo"), _submoduleFERepoUrl.Text);
             if (!string.IsNullOrEmpty(_submoduleFERepoMusicUrl.Text) && _submoduleFERepoMusicUrl.Text != oldMusic)
                 GitUtil.SetSubmoduleRemote(System.IO.Path.Combine(repoRoot, "resources", "FE-Repo-Music-No-Preview"), _submoduleFERepoMusicUrl.Text);
+        }
+
+        private void AAA_button_Click(object sender, EventArgs e)
+        {
+            string r = EXESearch("AAA.exe|AAA.exe|");
+            if (r != "")
+            {
+                AAA.Text = r;
+            }
+        }
+
+        private void AAA_DoubleClick(object sender, EventArgs e)
+        {
+            this.AAA_button.PerformClick();
         }
     }
 }
