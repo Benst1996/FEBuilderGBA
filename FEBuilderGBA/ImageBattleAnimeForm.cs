@@ -89,20 +89,15 @@ namespace FEBuilderGBA
                 N_L_0_SPLITSTRING_7.Enabled = true;
                 N_B8.Left = 199;
                 N_B8.Top = 368;
-                N_B8.ReadOnly = true;
                 N_B9.Visible = false;
                 N_B10.Visible = false;
                 N_B11.Visible = false;
 
                 additionalProperties.Visible = true;
                 N_L_08_BIT_01.Visible = true;
-                N_L_08_BIT_01.Enabled = true;
                 N_L_08_BIT_02.Visible = true;
-                N_L_08_BIT_02.Enabled = true;
                 N_L_08_BIT_04.Visible = true;
-                N_L_08_BIT_04.Enabled = true;
                 N_L_08_BIT_08.Visible = true;
-                N_L_08_BIT_08.Enabled = true;
 
                 banimExtendImportButton.Visible = true;
                 banimExtendImportButton.Enabled = true;
@@ -115,20 +110,15 @@ namespace FEBuilderGBA
                 N_L_0_SPLITSTRING_7.Enabled = false;
                 N_B8.Left = 108;
                 N_B8.Top = 67;
-                N_B8.ReadOnly = false;
                 N_B9.Visible = true;
                 N_B10.Visible = true;
                 N_B11.Visible = true;
 
                 additionalProperties.Visible = false;
                 N_L_08_BIT_01.Visible = false;
-                N_L_08_BIT_01.Enabled = false;
                 N_L_08_BIT_02.Visible = false;
-                N_L_08_BIT_02.Enabled = false;
                 N_L_08_BIT_04.Visible = false;
-                N_L_08_BIT_04.Enabled = false;
                 N_L_08_BIT_08.Visible = false;
-                N_L_08_BIT_08.Enabled = false;
 
                 banimExtendImportButton.Visible = false;
                 banimExtendImportButton.Enabled = false;
@@ -262,26 +252,41 @@ namespace FEBuilderGBA
             string text = "Un-LZ77 ";
             uint frame = U.toOffset(N_P16.Value);
             uint oam = U.toOffset(N_P20.Value);
+            uint additionalProperties = getAdditionalProperties();
             if (U.isSafetyOffset(frame))
             {
-                uint size = LZ77.getUncompressSize(Program.ROM.Data, frame);
-                text += "Frame: " + size + " ";
-
-                string r = ImageUtilOAM.checkFrameSizeSimple((int)size);
-                if (r != "")
+                if ((additionalProperties & ImageUtilOAM.BA2_AB_UNCOMPFRAMEDATA) != 0)
                 {
-                    error += r;
+                    text += "Frame: 非圧縮、サイズ不明。";
+                }
+                else
+                {
+                    uint size = LZ77.getUncompressSize(Program.ROM.Data, frame);
+                    text += "Frame: " + size + " ";
+
+                    string r = ImageUtilOAM.checkFrameSizeSimple((int)size);
+                    if (r != "")
+                    {
+                        error += r;
+                    }
                 }
             }
             if (U.isSafetyOffset(oam))
             {
-                uint size = LZ77.getUncompressSize(Program.ROM.Data, oam);
-                text += "OAM: " + size + " ";
-
-                string r = ImageUtilOAM.checkOAMSizeSimple((int)size);
-                if (r != "")
+                if ((additionalProperties & ImageUtilOAM.BA2_AB_UNCOMPOAMDATA) != 0)
                 {
-                    error += r;
+                    text += "OAM: 非圧縮、サイズ不明。";
+                }
+                else
+                {
+                    uint size = LZ77.getUncompressSize(Program.ROM.Data, oam);
+                    text += "OAM: " + size + " ";
+
+                    string r = ImageUtilOAM.checkOAMSizeSimple((int)size);
+                    if (r != "")
+                    {
+                        error += r;
+                    }
                 }
             }
             if (error != "")
@@ -307,6 +312,7 @@ namespace FEBuilderGBA
             int paletteIndex = (int)ShowPaletteComboBox.SelectedIndex;
 
             uint additionalProperties = getAdditionalProperties();
+            uint battleanime_baseaddress = (uint)N_Address.Value;
             uint faceDirection = ImageUtilOAM.BANIM_FACELEFT;
             uint sectionData = (uint)N_P12.Value;
             uint frameData = (uint)N_P16.Value;
@@ -332,8 +338,8 @@ namespace FEBuilderGBA
                 faceDirection = ImageUtilOAM.BANIM_FACERIGHT;
             }
 
-            Bitmap bitmap = ImageUtilOAM.DrawBattleAnime(showSectionData, showFrameData
-                , sectionData, frameData, faceDirection, rightToLeftOAM, leftToRightOAM, palettes, additionalProperties);
+            Bitmap bitmap = ImageUtilOAM.DrawBattleAnime(battleanime_baseaddress, showSectionData, showFrameData
+                , sectionData, frameData, faceDirection, rightToLeftOAM, leftToRightOAM, palettes);
             if (paletteIndex > 0)
             {
                 if ((additionalProperties & ImageUtilOAM.BA2_AB_2PALETTES) != 0)
@@ -398,6 +404,7 @@ namespace FEBuilderGBA
             uint rightToLeftOAM = Program.ROM.u32(addr + 20);
             uint leftToRightOAM = Program.ROM.u32(addr + 24);
             uint palettes = Program.ROM.u32(addr + 28);
+
             if (custompalette > 0)
             {
                 uint p = ImageUnitPaletteForm.GetPaletteAddr(custompalette);
@@ -407,8 +414,9 @@ namespace FEBuilderGBA
                 }
             }
 
-            Bitmap bitmap = ImageUtilOAM.DrawBattleAnime(showSectionData, showFrameData
-                , sectionData, frameData, ImageUtilOAM.BANIM_FACELEFT, rightToLeftOAM, leftToRightOAM, palettes, additionalProperties);
+            Bitmap bitmap = ImageUtilOAM.DrawBattleAnime(addr, showSectionData, showFrameData
+                , sectionData, frameData, ImageUtilOAM.BANIM_FACELEFT, rightToLeftOAM, leftToRightOAM, palettes);
+
             if (showPaletteIndex > 0)
             {
                 if ((additionalProperties & ImageUtilOAM.BA2_AB_2PALETTES) != 0)
@@ -948,7 +956,7 @@ namespace FEBuilderGBA
             uint sectionData = (uint)N_P12.Value;
             uint frameData = (uint)N_P16.Value;
             uint rightToLeftOAM = (uint)N_P20.Value;
-            uint leftToRightOAM = (uint)N_P24.Value;
+            //uint leftToRightOAM = (uint)N_P24.Value;
             uint palettes = (uint)N_P28.Value;
 
             uint ID = (uint)N_AddressList.SelectedIndex + 1;
@@ -1521,7 +1529,8 @@ namespace FEBuilderGBA
             string pathToAAA = ToolPathResolver.ResolveAAA();
             if (pathToAAA == null)
             {
-                R.ShowStopError("TODO AAA.exe is not setup JP.");
+                // path to AAA executable not set. Ask user to set path.
+                R.ShowStopError("{0}の設定がありません。 設定->オプションから、{0}を設定してください。", "AAA.exe");
                 return;
             }
 
@@ -1532,7 +1541,7 @@ namespace FEBuilderGBA
             else
             {
                 string title = R._("開くファイル名を選択してください");
-                string filter = R._("AAA Script JP|*.txt");
+                string filter = R._("AAAスクリプト|*.txt");
 
                 OpenFileDialog open = new OpenFileDialog();
                 open.Title = title;
@@ -1572,13 +1581,17 @@ namespace FEBuilderGBA
             }
             if (installerName == "")
             {
-                // TODO handle AAA error!
+                // Could not find installer file. Maybe AAA Errored. Display AAA output.
+                string error = string.Join("\n", outputLines);
+                R.ShowStopError("インストーラーファイルが見つかりませんでした。AAAの出力は以下の通りです：\n{0}", error);
+                return;
             }
             string installerPath = Path.Combine(outputPath, installerName);
 
             // Create empty rom.
             string tempRomName = "_FBG_Temp_" + DateTime.Now.Ticks.ToString() + ".gba";
             string tempRomPath = Path.Combine(outputPath, tempRomName);
+            string tempRomSym = tempRomPath.Remove(tempRomPath.Length - 3) + "sym";
             const int tempRomFreeSpace = 0x1000000;
             File.CreateText(tempRomPath).Close();
 
@@ -1607,7 +1620,51 @@ namespace FEBuilderGBA
             FileInfo f = new FileInfo(tempRomPath);
             uint patchSize = (uint)((int)f.Length - tempRomFreeSpace);
 
-            // TODO, handle error if patchSize is < 0 or > 0x100 0000.
+            // Delete temporary rom file.
+            try
+            {
+                File.Delete(tempRomPath);
+            }
+            catch (NotSupportedException exception)
+            {
+                R.ShowStopError(exception.Message);
+            }
+            catch (PathTooLongException exception)
+            {
+                R.ShowStopError(exception.Message);
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                R.ShowStopError(exception.Message);
+            }
+
+            // Delete potentially generated symfile as well.
+            if (File.Exists(tempRomSym))
+            {
+                try
+                {
+                    File.Delete(tempRomSym);
+                }
+                catch (NotSupportedException exception)
+                {
+                    R.ShowStopError(exception.Message);
+                }
+                catch (PathTooLongException exception)
+                {
+                    R.ShowStopError(exception.Message);
+                }
+                catch (UnauthorizedAccessException exception)
+                {
+                    R.ShowStopError(exception.Message);
+                }
+            }
+
+            // If patchSize is > 0x100 0000, throw error.
+            if (patchSize > 0x1000000)
+            {
+                R.ShowStopError("インストーラーファイルが大きすぎます。サイズは16 MBを超えないようにしてください。現在のサイズ: {0} バイト", patchSize);
+                return;
+            }
 
             // Determine free area required based on this size.
             uint freearea = InputFormRef.AllocBinaryData(patchSize, isProgramArea: false);

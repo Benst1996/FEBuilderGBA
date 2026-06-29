@@ -24624,23 +24624,38 @@ A: 不使用 TSA 的背景 224 色(对话用)
 :Failed to open decomp project:
 打开反编译工程失败:
 
-:Additional Properties JP
-Additional Properties ZH
+:追加のプロパティ
+其他属性
 
-:TODO banim additional properties tag hover JP.\r\n
-TODO banim additional properties tag hover ZH.\r\n
+:これらの「追加プロパティ（Additional Properties）」がいずれか設定されている場合、その戦闘アニメーションの編集やエクスポートは行えなくなります。これらのプロパティを手動で設定しないでください！代わりに、これらの追加プロパティが設定済みの戦闘アニメーションスクリプトをインポートするようにしてください。\r\n
+如果设置了这些“附加属性”中的任意一项，该战斗动画将无法进行编辑或导出。请勿手动设置这些属性！正确的做法是导入一个已预先设置好这些“附加属性”的战斗动画脚本。\r\n
 
-:Uncompressed palette JP
-Uncompressed palette ZH
+:非圧縮パレット
+未压缩调色板
 
-:Uncompressed FrameData JP
-Uncompressed FrameData ZH
+:非圧縮フレームデータ
+未压缩帧数据
 
-:Uncompressed OAMData JP
-Uncompressed OAMData ZH
+:非圧縮OAMデータ
+未压缩的 OAM 数据
 
-:32 Colours JP
-32 Colours ZH
+:32色
+32种颜色
 
-:Import Battle Animation with additional properties JP
-Import Battle Animation with additional properties ZH
+:追加プロパティ付きで戦闘アニメーションをインポートする
+导入带有附加属性的战斗动画
+
+:AAAスクリプト|*.txt
+AAA 脚本|*.txt
+
+:Another Animation Assembler (AAA.exe)。extendBanimパッチで使用されます。
+Another Animation Assembler (AAA.exe)。由 extendBanim 补丁使用。
+
+:インストーラーファイルが見つかりませんでした。AAAの出力は以下の通りです：
+找不到安装程序文件。AAA 输出内容如下：
+
+:非圧縮、サイズ不明。
+未压缩，大小未知。
+
+:インストーラーファイルが大きすぎます。サイズは16 MBを超えないようにしてください。現在のサイズ: {0} バイト
+安装程序文件过大。大小不应超过 16 MB。当前大小为：\n{0} 字节

@@ -653,7 +653,7 @@
             banimExtendImportButton.Name = "banimExtendImportButton";
             banimExtendImportButton.Size = new System.Drawing.Size(269, 41);
             banimExtendImportButton.TabIndex = 214;
-            banimExtendImportButton.Text = "Import Battle Animation with additional properties JP";
+            banimExtendImportButton.Text = "追加プロパティ付きで戦闘アニメーションをインポートする";
             banimExtendImportButton.UseVisualStyleBackColor = true;
             banimExtendImportButton.Click += banimExtendImportButton_Click;
             // 
@@ -719,56 +719,52 @@
             additionalProperties.Name = "additionalProperties";
             additionalProperties.Size = new System.Drawing.Size(637, 23);
             additionalProperties.TabIndex = 0;
-            additionalProperties.Text = "Additional Properties JP";
+            additionalProperties.Text = "追加のプロパティ";
             additionalProperties.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             // 
             // N_L_08_BIT_01
             // 
-            N_L_08_BIT_01.AutoCheck = false;
             N_L_08_BIT_01.AutoSize = true;
             N_L_08_BIT_01.BackColor = System.Drawing.SystemColors.Control;
             N_L_08_BIT_01.ForeColor = System.Drawing.SystemColors.ControlText;
             N_L_08_BIT_01.Location = new System.Drawing.Point(11, 368);
             N_L_08_BIT_01.Name = "N_L_08_BIT_01";
-            N_L_08_BIT_01.Size = new System.Drawing.Size(147, 17);
+            N_L_08_BIT_01.Size = new System.Drawing.Size(96, 17);
             N_L_08_BIT_01.TabIndex = 0;
-            N_L_08_BIT_01.Text = "Uncompressed palette JP";
+            N_L_08_BIT_01.Text = "非圧縮パレット";
             N_L_08_BIT_01.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             N_L_08_BIT_01.UseVisualStyleBackColor = false;
             // 
             // N_L_08_BIT_02
             // 
-            N_L_08_BIT_02.AutoCheck = false;
             N_L_08_BIT_02.AutoSize = true;
             N_L_08_BIT_02.Location = new System.Drawing.Point(11, 388);
             N_L_08_BIT_02.Name = "N_L_08_BIT_02";
-            N_L_08_BIT_02.Size = new System.Drawing.Size(167, 17);
+            N_L_08_BIT_02.Size = new System.Drawing.Size(127, 17);
             N_L_08_BIT_02.TabIndex = 0;
-            N_L_08_BIT_02.Text = "Uncompressed FrameData JP";
+            N_L_08_BIT_02.Text = "非圧縮フレームデータ";
             N_L_08_BIT_02.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             N_L_08_BIT_02.UseVisualStyleBackColor = true;
             // 
             // N_L_08_BIT_04
             // 
-            N_L_08_BIT_04.AutoCheck = false;
             N_L_08_BIT_04.AutoSize = true;
             N_L_08_BIT_04.Location = new System.Drawing.Point(11, 408);
             N_L_08_BIT_04.Name = "N_L_08_BIT_04";
-            N_L_08_BIT_04.Size = new System.Drawing.Size(162, 17);
+            N_L_08_BIT_04.Size = new System.Drawing.Size(114, 17);
             N_L_08_BIT_04.TabIndex = 0;
-            N_L_08_BIT_04.Text = "Uncompressed OAMData JP";
+            N_L_08_BIT_04.Text = "非圧縮OAMデータ";
             N_L_08_BIT_04.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             N_L_08_BIT_04.UseVisualStyleBackColor = true;
             // 
             // N_L_08_BIT_08
             // 
-            N_L_08_BIT_08.AutoCheck = false;
             N_L_08_BIT_08.AutoSize = true;
             N_L_08_BIT_08.Location = new System.Drawing.Point(11, 428);
             N_L_08_BIT_08.Name = "N_L_08_BIT_08";
-            N_L_08_BIT_08.Size = new System.Drawing.Size(91, 17);
+            N_L_08_BIT_08.Size = new System.Drawing.Size(50, 17);
             N_L_08_BIT_08.TabIndex = 0;
-            N_L_08_BIT_08.Text = "32 Colours JP";
+            N_L_08_BIT_08.Text = "32色";
             N_L_08_BIT_08.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             N_L_08_BIT_08.UseVisualStyleBackColor = true;
             // 

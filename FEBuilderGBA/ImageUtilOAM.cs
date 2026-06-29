@@ -109,58 +109,67 @@ namespace FEBuilderGBA
             return false;
         }
 
-        public static Bitmap DrawBattleAnime(uint showSectionData, uint showFrameData, uint sectionData, uint frameData, uint faceDirection, uint rightToLeftOAM, uint leftToRightOAM, uint palettes, uint additionalProperties)
+        // Returns additional properties of banim.
+        public static uint getAdditionalProperties(uint battleanime_baseaddress)
         {
-            //解凍する.
-            //固定長のsectionData以外はLZ77で圧縮されている.
-            uint sectionData_offset = U.toOffset(sectionData); //int[0xC]個 ヘッダの区切りバイト 絶対値
+            uint additionalProperties = 0;
+            if (IsBanimExtendActive())
+            {
+                additionalProperties = Program.ROM.u32(battleanime_baseaddress + 8);    // Uncompressed palette, FrameData, OAMData, etc.
+            }
 
-            byte[] frameData_UZ;
-            byte[] oam_UZ;
-            byte[] palettes_UZ;
+            return additionalProperties;
+        }
 
+        private static void GetBattleAnimeData(uint battleanime_baseaddress,
+                                               uint frameDataOffset, out byte[] frameData,
+                                               uint rightToLeftOAMOffset, out byte[] rightToLeftOAM,
+                                               uint leftToRightOAMOffset, out byte[] leftToRightOAM,
+                                               uint palettesOffset, out byte[] palettes)
+        {
+            uint additionalProperties = getAdditionalProperties(battleanime_baseaddress);
+            uint unCompressedLength, offsetStart, offsetEnd;
+
+            // Only decompress data if it's compressed.
             // Decompress data if applicable, otherwise, don't decompress.
             // - FrameData.
             if ((additionalProperties & BA2_AB_UNCOMPFRAMEDATA) != 0)
             {
-                // Uncompressed.
-                frameData_UZ = Program.ROM.getBinaryData(U.toOffset(frameData), U.toOffset(rightToLeftOAM) - U.toOffset(frameData));
+                // Uncompressed. AAA puts frameData immediately before rightToLeftOAM.
+                offsetStart = U.toOffset(frameDataOffset);
+                offsetEnd = U.toOffset(rightToLeftOAMOffset);
+                unCompressedLength = offsetEnd - offsetStart;
+                if (offsetStart > offsetEnd)
+                {
+                    unCompressedLength = 0;
+                }
+                frameData = Program.ROM.getBinaryData(U.toOffset(frameDataOffset), unCompressedLength);
             }
             else
             {
                 // Compressed.
-                frameData_UZ = UnCompressFrame(frameData); //画像をどう切り出すかを提起したデータ;
+                frameData = UnCompressFrame(frameDataOffset); //画像をどう切り出すかを提起したデータ;
             }
 
             // - OAMData.
             if ((additionalProperties & BA2_AB_UNCOMPOAMDATA) != 0)
             {
-                // Uncompressed.
-                if (faceDirection == BANIM_FACELEFT)
+                // Uncompressed. AAA puts rightToLeftOAM immediately before leftToRightOAM.
+                offsetStart = U.toOffset(rightToLeftOAMOffset);
+                offsetEnd = U.toOffset(leftToRightOAMOffset);
+                unCompressedLength = offsetEnd - offsetStart;
+                if (offsetStart > offsetEnd)
                 {
-                    // banim facing left.
-                    oam_UZ = Program.ROM.getBinaryData(U.toOffset(rightToLeftOAM), U.toOffset(leftToRightOAM) - U.toOffset(rightToLeftOAM));
+                    unCompressedLength = 0;
                 }
-                else
-                {
-                    // banim facing right.
-                    // We don't know the size of ltrOAM so we assume it's the same as rtlOAM give or take (+100).
-                    oam_UZ = Program.ROM.getBinaryData(U.toOffset(leftToRightOAM), (U.toOffset(leftToRightOAM) - U.toOffset(rightToLeftOAM)) + 100);
-                }
+                rightToLeftOAM = Program.ROM.getBinaryData(U.toOffset(rightToLeftOAMOffset), unCompressedLength);
+                leftToRightOAM = Program.ROM.getBinaryData(U.toOffset(leftToRightOAMOffset), unCompressedLength);
             }
             else
             {
                 // Compressed.
-                if (faceDirection == BANIM_FACELEFT)
-                {
-                    // banim facing left.
-                    oam_UZ = LZ77.decompress(Program.ROM.Data, U.toOffset(rightToLeftOAM)); //OAM
-                }
-                else
-                {
-                    // banim facing right.
-                    oam_UZ = LZ77.decompress(Program.ROM.Data, U.toOffset(leftToRightOAM)); //OAM
-                }
+                rightToLeftOAM = LZ77.decompress(Program.ROM.Data, U.toOffset(rightToLeftOAMOffset)); //OAM
+                leftToRightOAM = LZ77.decompress(Program.ROM.Data, U.toOffset(leftToRightOAMOffset)); //OAM
             }
 
             // - Palettes.
@@ -169,23 +178,42 @@ namespace FEBuilderGBA
                 // Uncompressed.
                 if ((additionalProperties & BA2_AB_2PALETTES) != 0)
                 {
-                // 32 colours.
-                palettes_UZ = Program.ROM.getBinaryData(U.toOffset(palettes), 256);
+                    // 32 colours.
+                    palettes = Program.ROM.getBinaryData(U.toOffset(palettesOffset), 256);
                 }
                 else
                 {
-                // 16 colours.
-                palettes_UZ = Program.ROM.getBinaryData(U.toOffset(palettes), 128);
+                    // 16 colours.
+                    palettes = Program.ROM.getBinaryData(U.toOffset(palettesOffset), 128);
                 }
             }
             else
             {
                 // Compressed.
-                palettes_UZ = LZ77.decompress(Program.ROM.Data, U.toOffset(palettes)); //Palette
+                palettes = LZ77.decompress(Program.ROM.Data, U.toOffset(palettesOffset)); //Palette
             }
+        }
+
+        public static Bitmap DrawBattleAnime(uint battleanime_baseaddress, uint showSectionData, uint showFrameData, uint sectionData, uint frameDataOffset, uint faceDirection, uint rightToLeftOAMOffset, uint leftToRightOAMOffset, uint palettesOffset)
+        {
+            //解凍する.
+            //固定長のsectionData以外はLZ77で圧縮されている.
+            uint sectionData_offset = U.toOffset(sectionData); //int[0xC]個 ヘッダの区切りバイト 絶対値
+
+            byte[] frameData, rightToLeftOAM, leftToRightOAM, oam, palettes;
+            GetBattleAnimeData(battleanime_baseaddress,
+                               frameDataOffset, out frameData,
+                               rightToLeftOAMOffset, out rightToLeftOAM,
+                               leftToRightOAMOffset, out leftToRightOAM,
+                               palettesOffset, out palettes);
+
+            // pick OAMData based on direction banim is facing.
+            oam = rightToLeftOAM;
+            if (faceDirection == BANIM_FACERIGHT)
+                oam = leftToRightOAM;
             
             // Confirm data integrity.
-            if (frameData_UZ.Length <= 0 || oam_UZ.Length <= 0 || palettes_UZ.Length <= 0)
+            if (frameData.Length <= 0 || oam.Length <= 0 || palettes.Length <= 0)
             {
                 return ImageUtil.BlankDummy();
             }
@@ -199,43 +227,43 @@ namespace FEBuilderGBA
                 || showSectionData == 0x2 - 1 || showSectionData == 0x4 - 1)
             {//とりあえず全部だすか
                 frameDataStart = 0;
-                frameDataEnd = (uint)frameData_UZ.Length;
+                frameDataEnd = (uint)frameData.Length;
             }
             else 
             {//mode0  - modeC
-                getSectionDataStartEnd(showSectionData, sectionData_offset, (uint)frameData_UZ.Length
+                getSectionDataStartEnd(showSectionData, sectionData_offset, (uint)frameData.Length
                     , out frameDataStart, out frameDataEnd);
             }
 
             //frameDataは4バイトずつのデータからなり、
             //?? ?? ?? 0x86 のあとには、4バイトの画像へのポインタと、 4バイトの 変換する OAMへの絶対位置を返します.
-            uint frame = FindFrame(showFrameData, frameDataStart, frameDataEnd, frameData_UZ);
+            uint frame = FindFrame(showFrameData, frameDataStart, frameDataEnd, frameData);
             if (frame == U.NOT_FOUND)
             {
-                return ImageUtil.Blank(SCREEN_TILE_WIDTH * 8, SCREEN_TILE_HEIGHT * 8, palettes_UZ, 0);
+                return ImageUtil.Blank(SCREEN_TILE_WIDTH * 8, SCREEN_TILE_HEIGHT * 8, palettes, 0);
             }
             Bitmap bitmap = DrawFrameImage
-                (frame, frameData_UZ, palettes_UZ, oam_UZ);
+                (frame, frameData, palettes, oam);
 
             if (IsSeet01or03(showSectionData))
             {//mode1 と mode3 は特別.  mode1は mode2と、 mode3は mode4 と、ともに利用する.
-                if (IsNoWeaponAnimation(sectionData_offset, frameData_UZ))
+                if (IsNoWeaponAnimation(sectionData_offset, frameData))
                 {//武器をもっていないモーションなので、0x01と0x03のような貫通している武器モーションは存在しない.
                     return bitmap;
                 }
                 uint frameDataStart2,frameDataEnd2;
-                getSectionDataStartEnd(showSectionData + 1, sectionData_offset, (uint)frameData_UZ.Length
+                getSectionDataStartEnd(showSectionData + 1, sectionData_offset, (uint)frameData.Length
                     , out frameDataStart2, out frameDataEnd2);
                 Debug.Assert(frameDataStart2 == Program.ROM.u32((showSectionData + 1) * 4 + sectionData_offset));
 
                 // FE6の神竜の変身モーションはsection0しか定義されていないので、この条件を満たさない時がある
                 //                Debug.Assert(frameDataEnd2 == Program.ROM.u32((showSectionData+ 1 + 1) * 4 + sectionData_offset));
 
-                uint frame2 = FindFrame(showFrameData, frameDataStart2, frameDataEnd2, frameData_UZ);
+                uint frame2 = FindFrame(showFrameData, frameDataStart2, frameDataEnd2, frameData);
                 if (frame2 != U.NOT_FOUND)
                 {
                     Bitmap bitmap2 = DrawFrameImage
-                        (frame2, frameData_UZ, palettes_UZ, oam_UZ);
+                        (frame2, frameData, palettes, oam);
                     ImageUtil.BitBlt(bitmap2, 0, 0, bitmap2.Width, bitmap2.Height, bitmap, 0, 0, 0, 0x00);
                     return bitmap2;
                 }
@@ -3757,6 +3785,7 @@ namespace FEBuilderGBA
                 return;
             }
 
+            uint additionalProperties = getAdditionalProperties(battleanime_baseaddress);       // Uncompressed palette, FrameData, OAMData, etc.
             uint sectionData_offset = Program.ROM.p32(battleanime_baseaddress + 12); //セクションデータ 固定長 
             uint frameData_offset = Program.ROM.p32(battleanime_baseaddress + 16);     //
             uint rightToLeftOAM_offset = Program.ROM.p32(battleanime_baseaddress + 20); //OAM
@@ -3774,18 +3803,22 @@ namespace FEBuilderGBA
             //解凍する.
             //固定長のsectionData以外はLZ77で圧縮されている.
             byte[] sectionData = Program.ROM.getBinaryData(sectionData_offset, 4 * 12);
-            byte[] frameData_UZ = UnCompressFrame(frameData_offset); //画像をどう切り出すかを提起したデータ
-            byte[] rightToLeftOAM_UZ = LZ77.decompress(Program.ROM.Data, rightToLeftOAM_offset); //OAM
-            byte[] leftToRightOAM_UZ = LZ77.decompress(Program.ROM.Data, leftToRightOAM_offset); //OAM
-            byte[] palettes_UZ = LZ77.decompress(Program.ROM.Data, palettes_offset); //Palette
-            if (frameData_UZ.Length < 4)
+            byte[] frameData, rightToLeftOAM, leftToRightOAM, palettes;
+            GetBattleAnimeData(battleanime_baseaddress,
+                               frameData_offset, out frameData,
+                               rightToLeftOAM_offset, out rightToLeftOAM,
+                               leftToRightOAM_offset, out leftToRightOAM,
+                               palettes_offset, out palettes);
+            
+            // Check data lengths.
+            if (frameData.Length < 4)
             {
                 errors.Add(new FELint.ErrorSt(FELint.Type.BATTLE_ANIME, battleanime_baseaddress
                     , R._("戦闘アニメのframeDataが破損しています。"), id)
                     );
                 return;
             }
-            if (rightToLeftOAM_UZ.Length < 12)
+            if (rightToLeftOAM.Length < 12)
             {
                 errors.Add(new FELint.ErrorSt(FELint.Type.BATTLE_ANIME, battleanime_baseaddress
                     , R._("戦闘アニメのrightToLeftOAMが破損しています。"), id)
@@ -3801,7 +3834,7 @@ namespace FEBuilderGBA
                     );
             }
 
-            if (leftToRightOAM_UZ.Length < 12)
+            if (leftToRightOAM.Length < 12)
             {
                 errors.Add(new FELint.ErrorSt(FELint.Type.BATTLE_ANIME, battleanime_baseaddress
                     , R._("戦闘アニメのleftToRightOAMが破損しています。"), id)
@@ -3817,9 +3850,9 @@ namespace FEBuilderGBA
                     );
             }
 
-            if (palettes_UZ.Length < 0x20 * 4)
+            if (palettes.Length < 0x20 * 4)
             {
-                if (palettes_UZ.Length < 0x20)
+                if (palettes.Length < 0x20)
                 {//昔バグで0x20しかかけていなかったんだよなあ
                     errors.Add(new FELint.ErrorSt(FELint.Type.BATTLE_ANIME, battleanime_baseaddress
                         , R._("戦闘アニメのパレットの長さが正しくありません。"), id)
@@ -3836,13 +3869,13 @@ namespace FEBuilderGBA
                     );
             }
 
-            bool isAttackAnimation = MakeCheckError_IsAttackAnimation(sectionData, frameData_UZ, rightToLeftOAM_UZ);
+            bool isAttackAnimation = MakeCheckError_IsAttackAnimation(sectionData, frameData, rightToLeftOAM);
 //            if (isAttackAnimation)
 //            {
 //                MakeCheckError_AnimaStartCommand(errors, battleanime_baseaddress, id, sectionData, frameData_UZ, rightToLeftOAM_UZ);
 //            }
             MakeCheckError_Frame(errors, battleanime_baseaddress, id, seatNumberList,isAttackAnimation,
-                sectionData, frameData_UZ, rightToLeftOAM_UZ);
+                sectionData, frameData, rightToLeftOAM);
 
         }
 

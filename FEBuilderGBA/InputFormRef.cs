@@ -12246,7 +12246,7 @@ namespace FEBuilderGBA
             else if (str == "@BATTLEANIME_ADDITIONALPROPERTIES")
             {
                 str = R._(
-                "TODO banim additional properties tag hover JP.\r\n");
+                "これらの「追加プロパティ（Additional Properties）」がいずれか設定されている場合、その戦闘アニメーションの編集やエクスポートは行えなくなります。これらのプロパティを手動で設定しないでください！代わりに、これらの追加プロパティが設定済みの戦闘アニメーションスクリプトをインポートするようにしてください。\r\n");
             }
             else if (str == "@UNIT_LOW_CLASS_PALETTE")
             {

@@ -20054,23 +20054,38 @@ Gray Army
 :Four Army
 Four Army
 
-:Additional Properties JP
+:追加のプロパティ
 Additional Properties
 
-:TODO banim additional properties tag hover JP.\r\n
-TODO banim additional properties tag hover EN. If any of these are set, anim can't be edited or exported. Can't set these here, instead import a banim with these set. Mention patch and import with AAA option.\r\n
+:これらの「追加プロパティ（Additional Properties）」がいずれか設定されている場合、その戦闘アニメーションの編集やエクスポートは行えなくなります。これらのプロパティを手動で設定しないでください！代わりに、これらの追加プロパティが設定済みの戦闘アニメーションスクリプトをインポートするようにしてください。\r\n
+If any of these Additional Properties are set, the Battle Animation can not be edited or exported. Do not set these properties manually! Instead import a Battle Animation script with these Additional Properties set.\r\n
 
-:Uncompressed palette JP
+:非圧縮パレット
 Uncompressed palette
 
-:Uncompressed FrameData JP
+:非圧縮フレームデータ
 Uncompressed FrameData
 
-:Uncompressed OAMData JP
+:非圧縮OAMデータ
 Uncompressed OAMData
 
-:32 Colours JP
+:32色
 32 Colours
 
-:Import Battle Animation with additional properties JP
-Import Battle Animation with additional properties
+:追加プロパティ付きで戦闘アニメーションをインポートする
+Import Battle Animation with Additional Properties
+
+:AAAスクリプト|*.txt
+AAA Script|*.txt
+
+:Another Animation Assembler (AAA.exe)。extendBanimパッチで使用されます。
+Another Animation Assembler (AAA.exe). Used by extendBanim patch.
+
+:インストーラーファイルが見つかりませんでした。AAAの出力は以下の通りです：
+Could not find installer file. AAA output reads:
+
+:非圧縮、サイズ不明。
+uncompressed, size unknown.
+
+:インストーラーファイルが大きすぎます。サイズは16 MBを超えないようにしてください。現在のサイズ: {0} バイト
+Installer file too big. Size should not exceed 16 MB. Size is:\n{0} bytes

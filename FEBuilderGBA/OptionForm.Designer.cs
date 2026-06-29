@@ -867,7 +867,7 @@
             X_EXPLAIN_AAA.Name = "X_EXPLAIN_AAA";
             X_EXPLAIN_AAA.Size = new System.Drawing.Size(549, 21);
             X_EXPLAIN_AAA.TabIndex = 57;
-            X_EXPLAIN_AAA.Text = "Another Animation Assembler (AAA.exe). Used by banimExtend patch. JP";
+            X_EXPLAIN_AAA.Text = "Another Animation Assembler (AAA.exe)。extendBanimパッチで使用されます。";
             X_EXPLAIN_AAA.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             // 
             // AAA
